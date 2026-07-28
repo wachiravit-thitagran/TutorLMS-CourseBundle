@@ -1,0 +1,50 @@
+{
+    "name": "spacework/tutor-course-bundles",
+    "description": "Course Bundles for Tutor LMS Free.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=8.1"
+    },
+    "require-dev": {
+        "squizlabs/php_codesniffer": "^3.9",
+        "wp-coding-standards/wpcs": "^3.1",
+        "phpcompatibility/phpcompatibility-wp": "^2.1",
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.0",
+        "yoast/phpunit-polyfills": "^2.0",
+        "phpunit/phpunit": "^9.6",
+        "brain/monkey": "^2.6",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "SpaceWork\\TutorCourseBundles\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SpaceWork\\TutorCourseBundles\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        },
+        "sort-packages": true
+    },
+    "scripts": {
+        "lint": "phpcs --standard=phpcs.xml.dist",
+        "lint:fix": "phpcbf --standard=phpcs.xml.dist",
+        "test": [
+            "@test:unit",
+            "@test:integration"
+        ],
+        "test:unit": "phpunit --configuration phpunit-unit.xml.dist",
+        "test:integration": "phpunit --configuration phpunit-integration.xml.dist",
+        "test:coverage": "phpunit --configuration phpunit-unit.xml.dist --coverage-html build/coverage"
+    },
+    "scripts-descriptions": {
+        "test:unit": "Run the isolated unit suite (no WordPress, no database).",
+        "test:integration": "Run the WordPress integration suite (requires the WP test library and MySQL)."
+    }
+}

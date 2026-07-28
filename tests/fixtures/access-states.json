@@ -1,0 +1,64 @@
+{
+	"active_lifetime": {
+		"status": "active",
+		"expires_in_days": null,
+		"starts_in_days": null,
+		"expected": { "usable": true, "expired": false, "terminated": false }
+	},
+
+	"active_expiring_tomorrow": {
+		"status": "active",
+		"expires_in_days": 1,
+		"starts_in_days": null,
+		"expected": { "usable": true, "expired": false, "terminated": false }
+	},
+
+	"active_but_past_expiry": {
+		"status": "active",
+		"expires_in_days": -1,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": true, "terminated": false }
+	},
+
+	"active_not_started_yet": {
+		"status": "active",
+		"expires_in_days": null,
+		"starts_in_days": 7,
+		"expected": { "usable": false, "expired": false, "terminated": false }
+	},
+
+	"pending_payment": {
+		"status": "pending",
+		"expires_in_days": null,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": false, "terminated": false }
+	},
+
+	"refunded": {
+		"status": "refunded",
+		"expires_in_days": null,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": false, "terminated": true }
+	},
+
+	"revoked_by_admin": {
+		"status": "revoked",
+		"expires_in_days": null,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": false, "terminated": true }
+	},
+
+	"cancelled_order": {
+		"status": "cancelled",
+		"expires_in_days": null,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": false, "terminated": true }
+	},
+
+	"expired_status": {
+		"status": "expired",
+		"expires_in_days": -30,
+		"starts_in_days": null,
+		"expected": { "usable": false, "expired": true, "terminated": true }
+	}
+}

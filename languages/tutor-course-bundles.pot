@@ -1,0 +1,17 @@
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: Tutor Course Bundles 1.0.0\n"
+"Report-Msgid-Bugs-To: https://github.com/wachiravit/TutorLMS-CourseBundle\n"
+"POT-Creation-Date: 2026-07-26 00:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"X-Domain: tutor-course-bundles\n"
+
+# Regenerate this file with:
+#   wp i18n make-pot . languages/tutor-course-bundles.pot --domain=tutor-course-bundles

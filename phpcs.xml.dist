@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<ruleset name="Tutor Course Bundles">
+	<description>Coding standards for the Tutor Course Bundles plugin.</description>
+
+	<file>.</file>
+
+	<exclude-pattern>/vendor/*</exclude-pattern>
+	<exclude-pattern>/node_modules/*</exclude-pattern>
+	<exclude-pattern>/assets/js/*.min.js</exclude-pattern>
+	<exclude-pattern>/tests/*</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg name="colors"/>
+	<arg value="sp"/>
+
+	<rule ref="WordPress">
+		<!-- PSR-4 determines class file names in this plugin. -->
+		<exclude name="WordPress.Files.FileName"/>
+		<!-- Public API names deliberately use the established tcb/TCB prefix. -->
+		<exclude name="WordPress.NamingConventions.PrefixAllGlobals"/>
+		<!-- Slash-separated hook names are part of the documented public API. -->
+		<exclude name="WordPress.NamingConventions.ValidHookName.UseUnderscores"/>
+		<!-- WordPress callbacks must retain the parameters defined by their hooks. -->
+		<exclude name="Generic.CodeAnalysis.UnusedFunctionParameter"/>
+		<!-- Admin/report queries intentionally use bounded batches of 200. -->
+		<exclude name="WordPress.WP.PostsPerPage"/>
+	</rule>
+
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="tutor-course-bundles"/>
+			</property>
+		</properties>
+	</rule>
+
+	<rule ref="PHPCompatibilityWP"/>
+	<config name="testVersion" value="8.1-"/>
+	<config name="minimum_wp_version" value="6.5"/>
+</ruleset>

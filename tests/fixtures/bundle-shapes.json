@@ -1,0 +1,136 @@
+{
+	"free_single_course": {
+		"title": "Free starter",
+		"access_type": "free",
+		"price": 0,
+		"expected": {
+			"is_free": true,
+			"course_count": 1,
+			"effective_price": 0,
+			"purchasable": true
+		},
+		"courses": [
+			{ "title": "Intro to HTML", "lessons": 3 }
+		]
+	},
+
+	"paid_three_courses": {
+		"title": "Frontend career path",
+		"access_type": "paid",
+		"price": 199,
+		"expected": {
+			"is_free": false,
+			"course_count": 3,
+			"effective_price": 199,
+			"purchasable": true
+		},
+		"courses": [
+			{ "title": "HTML Fundamentals", "lessons": 4 },
+			{ "title": "CSS Fundamentals", "lessons": 4 },
+			{ "title": "JavaScript Basics", "lessons": 6 }
+		]
+	},
+
+	"paid_on_sale": {
+		"title": "Black Friday bundle",
+		"access_type": "paid",
+		"price": 300,
+		"sale_price": 99,
+		"expected": {
+			"is_free": false,
+			"course_count": 2,
+			"effective_price": 99,
+			"purchasable": true
+		},
+		"courses": [
+			{ "title": "Design Systems", "lessons": 5 },
+			{ "title": "Figma for Developers", "lessons": 5 }
+		]
+	},
+
+	"mixed_required_optional": {
+		"title": "Data track with electives",
+		"access_type": "free",
+		"price": 0,
+		"completion_mode": "all_required",
+		"expected": {
+			"is_free": true,
+			"course_count": 4,
+			"required_count": 2,
+			"effective_price": 0,
+			"purchasable": true
+		},
+		"courses": [
+			{ "title": "Python Core", "lessons": 6, "required": true },
+			{ "title": "SQL Core", "lessons": 4, "required": true },
+			{ "title": "Elective: Pandas", "lessons": 3, "required": false },
+			{ "title": "Elective: Viz", "lessons": 3, "required": false }
+		]
+	},
+
+	"time_limited": {
+		"title": "90-day bootcamp",
+		"access_type": "paid",
+		"price": 499,
+		"access_duration": 90,
+		"expected": {
+			"is_free": false,
+			"course_count": 2,
+			"effective_price": 499,
+			"purchasable": true,
+			"access_duration": 90
+		},
+		"courses": [
+			{ "title": "Bootcamp Week 1-4", "lessons": 8 },
+			{ "title": "Bootcamp Week 5-8", "lessons": 8 }
+		]
+	},
+
+	"draft_bundle": {
+		"title": "Not ready yet",
+		"status": "draft",
+		"access_type": "paid",
+		"price": 50,
+		"expected": {
+			"is_free": false,
+			"course_count": 1,
+			"effective_price": 50,
+			"purchasable": false
+		},
+		"courses": [
+			{ "title": "Unreleased course", "lessons": 2 }
+		]
+	},
+
+	"bundle_with_unpublished_course": {
+		"title": "Half-built bundle",
+		"access_type": "free",
+		"price": 0,
+		"expected": {
+			"is_free": true,
+			"course_count": 2,
+			"available_course_count": 1,
+			"effective_price": 0,
+			"purchasable": true
+		},
+		"courses": [
+			{ "title": "Live course", "lessons": 3, "status": "publish" },
+			{ "title": "Still drafting", "lessons": 3, "status": "draft" }
+		]
+	},
+
+	"empty_bundle": {
+		"title": "Nothing inside",
+		"access_type": "free",
+		"price": 0,
+		"expected": {
+			"is_free": true,
+			"course_count": 0,
+			"available_course_count": 0,
+			"effective_price": 0,
+			"purchasable": true,
+			"sellable": false
+		},
+		"courses": []
+	}
+}

@@ -1,0 +1,13 @@
+/vendor/
+/node_modules/
+/build/
+/.phpunit.result.cache
+/phpcs-report.xml
+/phpcs.xml
+/phpunit.xml
+/phpunit-unit.xml
+/phpunit-integration.xml
+.DS_Store
+Thumbs.db
+*.log
+*.zip

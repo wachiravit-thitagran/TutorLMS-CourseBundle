@@ -1,0 +1,213 @@
+/**
+ * Tutor Course Bundles — admin styles.
+ */
+
+/* ---------- Course builder ---------- */
+
+.tcb-course-builder {
+	margin: 0;
+}
+
+.tcb-course-search {
+	position: relative;
+	margin-bottom: 12px;
+}
+
+.tcb-course-search__input {
+	width: 100%;
+	max-width: 480px;
+	padding: 8px 12px;
+}
+
+.tcb-course-search__results {
+	position: absolute;
+	z-index: 20;
+	left: 0;
+	top: calc(100% + 4px);
+	width: 100%;
+	max-width: 480px;
+	max-height: 280px;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.tcb-course-search__item {
+	display: block;
+	width: 100%;
+	text-align: left;
+	padding: 9px 12px;
+	background: none;
+	border: 0;
+	border-bottom: 1px solid #f0f0f1;
+	cursor: pointer;
+	font-size: 13px;
+}
+
+.tcb-course-search__item:last-child {
+	border-bottom: 0;
+}
+
+.tcb-course-search__item:hover,
+.tcb-course-search__item:focus {
+	background: #f6f7f7;
+}
+
+.tcb-course-search__empty {
+	margin: 0;
+	padding: 12px;
+	color: #646970;
+	font-size: 13px;
+}
+
+.tcb-selected-courses {
+	margin: 12px 0 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+}
+
+.tcb-selected-courses:empty {
+	border: 0;
+}
+
+.tcb-course-row {
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr) auto auto;
+	align-items: center;
+	gap: 12px;
+	padding: 10px 12px;
+	background: #fff;
+	border-bottom: 1px solid #f0f0f1;
+}
+
+.tcb-course-row:last-child {
+	border-bottom: 0;
+}
+
+.tcb-course-row--warning {
+	background: #fcf9e8;
+}
+
+.tcb-course-row__handle {
+	cursor: grab;
+	color: #8c8f94;
+	user-select: none;
+	letter-spacing: -2px;
+}
+
+.tcb-course-row__title {
+	font-weight: 600;
+}
+
+.tcb-course-row__flag {
+	display: inline-block;
+	margin-left: 8px;
+	font-size: 11px;
+	font-weight: 400;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: #8a6d1b;
+	background: #f6e7b0;
+	border-radius: 3px;
+	padding: 1px 6px;
+}
+
+.tcb-course-row__required {
+	font-size: 12px;
+	color: #50575e;
+	white-space: nowrap;
+}
+
+.tcb-course-row__remove {
+	color: #b32d2e;
+}
+
+.tcb-course-row-placeholder {
+	height: 42px;
+	background: #f0f6fc;
+	border: 1px dashed #b6d4f0;
+}
+
+.tcb-empty-state {
+	color: #646970;
+	font-style: italic;
+}
+
+.tcb-warning {
+	color: #b32d2e;
+}
+
+/* ---------- Admin pages ---------- */
+
+.tcb-admin-page .tcb-stat-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+	gap: 16px;
+	margin: 20px 0;
+}
+
+.tcb-stat-card {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	padding: 16px;
+}
+
+.tcb-stat-card__value {
+	display: block;
+	font-size: 26px;
+	font-weight: 700;
+	line-height: 1.2;
+}
+
+.tcb-stat-card__label {
+	display: block;
+	color: #646970;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	margin-top: 4px;
+}
+
+.tcb-status {
+	display: inline-block;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	border-radius: 3px;
+	padding: 2px 8px;
+	background: #f0f0f1;
+	color: #3c434a;
+}
+
+.tcb-status--active { background: #d7f2dd; color: #16601f; }
+.tcb-status--pending { background: #fcf0d3; color: #7a5a08; }
+.tcb-status--expired,
+.tcb-status--revoked,
+.tcb-status--refunded,
+.tcb-status--cancelled { background: #f8d7da; color: #8a1f28; }
+
+.tcb-form-table th {
+	width: 220px;
+}
+
+.tcb-filter-bar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	align-items: flex-end;
+	margin: 16px 0;
+}
+
+.tcb-inline-form {
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	padding: 16px;
+	margin-bottom: 20px;
+	max-width: 720px;
+}
