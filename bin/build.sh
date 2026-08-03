@@ -31,14 +31,25 @@ if [ ! -f "$MAIN_FILE" ]; then
 	exit 1
 fi
 
-VERSION=$(grep -E '^[[:space:]]*\*[[:space:]]*Version:' "$MAIN_FILE" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+# Read the header value whole. A loose "three numbers" grep would quietly turn
+# 1.0.0-dev into 1.0.0 and claim the zip is a release build, and would accept
+# junk such as v1.2.3 or 1.0.0.0 by pulling a plausible-looking version out of
+# it; here the string is validated as semver and then carried through unchanged,
+# so an unstamped working copy is visible in the output instead of disguised.
+VERSION=$(grep -iE '^[[:space:]]*\*[[:space:]]*Version:' "$MAIN_FILE" | head -1 | sed -E 's/.*[Vv]ersion:[[:space:]]*//' | tr -d '[:space:]')
 
-if [ -z "$VERSION" ]; then
-	echo "Could not read a semver Version header from ${MAIN_FILE}." >&2
+if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+	echo "Could not read a semver Version header from ${MAIN_FILE} (got '${VERSION}')." >&2
 	exit 1
 fi
 
 echo "Building ${PLUGIN_SLUG} ${VERSION}"
+
+case "$VERSION" in
+	*-*|*+*)
+		echo "Note: this is a pre-release header. A release build is stamped first." >&2
+		;;
+esac
 
 # Only remove what this script owns; build/ also holds PHPUnit result caches.
 rm -rf "$BUILD_DIR" "$DIST_DIR"
@@ -115,11 +126,20 @@ for required in \
 	fi
 done
 
-# The zip must carry the same version the header claims.
+# The zip must carry the same version the header claims. Read whole and compared
+# whole, so a suffix cannot be lost between the two reads.
 zipped_header=$(unzip -p "$ZIP" "${PLUGIN_SLUG}/${MAIN_FILE}")
-zipped_version=$(grep -E '^[[:space:]]*\*[[:space:]]*Version:' <<<"$zipped_header" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+zipped_version=$(grep -iE '^[[:space:]]*\*[[:space:]]*Version:' <<<"$zipped_header" | head -1 | sed -E 's/.*[Vv]ersion:[[:space:]]*//' | tr -d '[:space:]')
 if [ "$zipped_version" != "$VERSION" ]; then
 	echo "Archive reports version '${zipped_version}', expected '${VERSION}'." >&2
+	exit 1
+fi
+
+# The runtime constant has to agree with the header, or a site will cache-bust
+# its assets against a version it is not running.
+zipped_constant=$(grep -E "'TCB_VERSION'" <<<"$zipped_header" | head -1 | sed -E "s/.*'TCB_VERSION',[[:space:]]*'([^']*)'.*/\1/")
+if [ "$zipped_constant" != "$VERSION" ]; then
+	echo "Archive TCB_VERSION is '${zipped_constant}', expected '${VERSION}'." >&2
 	exit 1
 fi
 

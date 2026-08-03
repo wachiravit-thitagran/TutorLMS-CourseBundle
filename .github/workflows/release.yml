@@ -6,8 +6,22 @@ name: Build & Release
 # the exact commit that suite ran against — github.event.workflow_run.head_sha
 # — rather than the current tip of main, which may already have moved on.
 #
+# Two things are worth knowing about the shape below.
+#
+# The decision to release is a job, not a job-level `if:`. An `if:` that says no
+# produces a job with conclusion "skipped", zero steps, no log and no
+# annotation: the answer is correct and completely invisible, which cost real
+# time the first time it happened. The gate job always runs, prints every
+# condition with the value it was given, and publishes the verdict as an
+# annotation on the run.
+#
+# The gate also asks the API for the Lint result of the same commit. main is
+# guarded by two workflows and `workflow_run` can only wait for one of them, so
+# waiting for Tests alone would happily ship a zip built from a commit whose
+# PSR-4 paths, ABSPATH guards or Pro references Lint had just rejected.
+#
 # Skip a release for a particular commit by putting [skip release] in its
-# message. Anything else pushed to main that passes the tests gets one.
+# message. Anything else pushed to main that passes both workflows gets one.
 on:
   workflow_run:
     workflows: ['Tests']
@@ -23,39 +37,301 @@ permissions:
   contents: write
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Runs unconditionally, so that "no release" is always an explained outcome.
+  # ---------------------------------------------------------------------------
+  gate:
+    name: Decide whether to release
+    runs-on: ubuntu-latest
+
+    # Reading another workflow's runs is all this job does; it needs no write
+    # access to anything.
+    permissions:
+      actions: read
+
+    outputs:
+      release: ${{ steps.decide.outputs.release }}
+      sha: ${{ steps.decide.outputs.sha }}
+
+    steps:
+      - name: Evaluate the release conditions
+        id: decide
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          TRIGGER_EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          GH_TOKEN: ${{ github.token }}
+          # The other workflow guarding main, matched by name — the same name
+          # `workflow_run` above matches Tests on.
+          LINT_WORKFLOW: Lint
+          # Bounded wait for the race explained at the poll loop: 30 × 20s.
+          LINT_WAIT_ATTEMPTS: '30'
+          LINT_WAIT_SECONDS: '20'
+        run: |
+          set -euo pipefail
+
+          # All of these are set by the runner (an absent payload field arrives
+          # as an empty string). Defaulted anyway so that this script can be
+          # pulled out of the file and exercised on its own, which is how the
+          # decision table it implements is tested.
+          : "${EVENT:=}" "${CONCLUSION:=}" "${TRIGGER_EVENT:=}" "${BRANCH:=}" "${MESSAGE:=}" "${SHA:=}"
+          : "${GITHUB_OUTPUT:=/dev/null}" "${GITHUB_STEP_SUMMARY:=/dev/null}"
+          : "${LINT_WORKFLOW:=Lint}" "${LINT_WAIT_ATTEMPTS:=30}" "${LINT_WAIT_SECONDS:=20}"
+          # The jq filter below reads this one out of the environment, so it has
+          # to be in the environment even when it came from the default above.
+          export LINT_WORKFLOW
+
+          # Every exit from this script goes through verdict(), so a run can
+          # never finish without recording both outputs and stating a reason.
+          # ::notice:: puts that reason on the run's summary page, which is
+          # where a release that did not happen used to show nothing at all.
+          verdict() {
+            local release="$1" reason="$2" title
+            {
+              echo "release=${release}"
+              echo "sha=${SHA}"
+            } >> "$GITHUB_OUTPUT"
+
+            if [ "$release" = 'true' ]; then
+              title='Releasing'
+            else
+              title='No release'
+            fi
+            echo "::notice title=${title}::${reason}"
+            {
+              echo "### ${title}"
+              echo
+              echo "${reason}"
+              echo
+              echo "| output | value |"
+              echo "| --- | --- |"
+              echo "| release | \`${release}\` |"
+              echo "| sha | \`${SHA:-none}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            echo
+            echo "Verdict: release=${release} — ${reason}"
+            exit 0
+          }
+
+          reject() { verdict false "$1"; }
+
+          # One request returns every run for the commit; the Lint ones are
+          # picked out of it by workflow name. Field order:
+          # count, status, conclusion, attempt, started, event, url.
+          #
+          # No field may be empty. A tab is IFS whitespace, so `read` collapses
+          # runs of them and an empty field would silently shift every field
+          # after it — .conclusion is null while a run is still going, which is
+          # exactly when the fields after it are wanted. Hence the "-" default,
+          # rather than "".
+          lint_query() {
+            gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" \
+              --jq '[ .workflow_runs[] | select( .name == env.LINT_WORKFLOW ) ] as $runs
+                    | ( $runs | sort_by( .run_started_at, .id ) | last ) as $newest
+                    | [ ( $runs | length ),
+                        ( $newest.status // "-" ),
+                        ( $newest.conclusion // "-" ),
+                        ( $newest.run_attempt // "-" ),
+                        ( $newest.run_started_at // "-" ),
+                        ( $newest.event // "-" ),
+                        ( $newest.html_url // "-" ) ]
+                    | @tsv'
+          }
+
+          # Sets lint_ok / lint_reason / lint_seen. $1 caps the number of polls.
+          lint_ok=false
+          lint_reason=''
+          lint_seen=''
+
+          check_lint() {
+            local max="${1:-$LINT_WAIT_ATTEMPTS}"
+            local attempt=1 row count status conclusion run_attempt started event url waited
+            lint_ok=false
+            lint_reason=''
+            lint_seen=''
+
+            while : ; do
+              if ! row=$(lint_query 2>&1); then
+                echo "      the Actions API could not be read:"
+                printf '%s\n' "$row" | sed 's/^/        /'
+                lint_reason="the ${LINT_WORKFLOW} result for ${SHA} could not be read from the Actions API"
+                return
+              fi
+
+              IFS=$'\t' read -r count status conclusion run_attempt started event url <<< "$row"
+              count=${count:-0}
+
+              # Nothing to trust. Lint runs on every push to main, so an absent
+              # run means it was disabled, deleted, or never existed at that
+              # commit — never that the commit is clean.
+              if [ "$count" -eq 0 ]; then
+                lint_reason="no ${LINT_WORKFLOW} run exists for ${SHA}, so the commit cannot be known to be clean"
+                return
+              fi
+
+              # Re-runs and repeated pushes of one commit leave several runs
+              # behind; the newest of them is the current answer.
+              if [ "$attempt" -eq 1 ] && [ "$count" -gt 1 ]; then
+                echo "      ${count} ${LINT_WORKFLOW} runs exist for this commit — taking the newest, started ${started}."
+              fi
+
+              case "$status" in
+                completed)
+                  lint_seen="${status}/${conclusion}, attempt ${run_attempt}, triggered by ${event}, ${url}"
+                  if [ "$conclusion" = 'success' ]; then
+                    lint_ok=true
+                  else
+                    lint_reason="${LINT_WORKFLOW} concluded '${conclusion}' for ${SHA}; see ${url}"
+                  fi
+                  return
+                  ;;
+                *)
+                  # The race. Both workflows start from the same push, and Lint
+                  # (php -l, phpcs, a handful of greps) normally finishes long
+                  # before the WordPress + MySQL matrix whose completion woke
+                  # this workflow up — so an unfinished Lint here means it was
+                  # queued behind runner capacity, or re-run by hand. Refusing
+                  # immediately would turn that into a phantom skipped release;
+                  # waiting indefinitely would hold the serialized `release`
+                  # concurrency group open behind it. So poll, briefly and
+                  # visibly, then refuse: a refusal is recoverable by re-running
+                  # this workflow, an unlinted release is not.
+                  if [ "$attempt" -ge "$max" ]; then
+                    waited=$(( ( attempt - 1 ) * LINT_WAIT_SECONDS ))
+                    lint_reason="${LINT_WORKFLOW} was still '${status}' for ${SHA} after waiting ${waited}s; see ${url}"
+                    return
+                  fi
+                  echo "      ${LINT_WORKFLOW} is '${status}' (poll ${attempt}/${max}); waiting ${LINT_WAIT_SECONDS}s."
+                  sleep "$LINT_WAIT_SECONDS"
+                  attempt=$(( attempt + 1 ))
+                  ;;
+              esac
+            done
+          }
+
+          # Only the subject is echoed: a commit message can be a paragraph.
+          # The opt-out test further down still reads the whole message.
+          subject=${MESSAGE%%$'\n'*}
+
+          echo "Inputs"
+          echo "  github.event_name                         = ${EVENT}"
+          echo "  workflow_run.conclusion                   = ${CONCLUSION:-none}"
+          echo "  workflow_run.event                        = ${TRIGGER_EVENT:-none}"
+          echo "  workflow_run.head_branch                  = ${BRANCH:-none}"
+          echo "  workflow_run.head_commit.message (line 1) = ${subject:-none}"
+          echo "  release SHA                               = ${SHA:-none}"
+          echo
+          echo "Conditions"
+
+          if [ -z "$SHA" ]; then
+            echo "FAIL  no head SHA in the event payload."
+            reject 'The event carried no head SHA, so there is no commit to release.'
+          fi
+          echo "PASS  a release SHA is present: ${SHA}"
+
+          # A person asking for a release by hand is the override, and being able
+          # to override is the point of the button. The Lint result is still
+          # reported so the override is an informed one, but it does not block.
+          if [ "$EVENT" = 'workflow_dispatch' ]; then
+            echo "PASS  github.event_name is workflow_dispatch — a person asked for this"
+            echo "      release, so the workflow_run conditions do not apply."
+            echo "      ${LINT_WORKFLOW} is reported below for information only: a dispatch"
+            echo "      is an override and is not refused on its account, so an unfinished"
+            echo "      ${LINT_WORKFLOW} is not waited for either."
+            check_lint 1
+            if [ "$lint_ok" = 'true' ]; then
+              echo "PASS  ${LINT_WORKFLOW} succeeded — ${lint_seen}"
+              verdict true "Manual dispatch: releasing ${SHA}, with ${LINT_WORKFLOW} green."
+            fi
+            echo "WARN  ${lint_reason}"
+            echo "::warning title=${LINT_WORKFLOW} is not green::${lint_reason} — releasing anyway because this run was dispatched by hand."
+            verdict true "Manual dispatch: releasing ${SHA} even though ${lint_reason}."
+          fi
+          echo "PASS  github.event_name is ${EVENT}, so every condition below applies"
+
+          # Tests said so, and nothing else may.
+          if [ "$CONCLUSION" != 'success' ]; then
+            echo "FAIL  workflow_run.conclusion is '${CONCLUSION:-none}', not 'success'."
+            reject "Tests concluded '${CONCLUSION:-none}' for ${SHA}; a commit whose tests did not pass is not released."
+          fi
+          echo "PASS  workflow_run.conclusion == success"
+
+          # Tests also runs for pull requests, where head_branch is the source
+          # branch and head_sha an ephemeral merge commit — never releasable. A
+          # PR opened *from* main would slip past the branch check below, so it
+          # is excluded on its own.
+          if [ "$TRIGGER_EVENT" = 'pull_request' ]; then
+            echo "FAIL  workflow_run.event is 'pull_request'."
+            reject "Tests ran for a pull request (head ${SHA}), whose head commit exists only for the run; nothing is released from one."
+          fi
+          echo "PASS  workflow_run.event is '${TRIGGER_EVENT:-none}', not 'pull_request'"
+
+          if [ "$BRANCH" != 'main' ]; then
+            echo "FAIL  workflow_run.head_branch is '${BRANCH:-none}', not 'main'."
+            reject "Tests ran on '${BRANCH:-none}'; releases are cut from main only."
+          fi
+          echo "PASS  workflow_run.head_branch == main"
+
+          # The escape hatch. Note that the marker is looked for in the message
+          # of the commit being released, so a commit message that documents the
+          # marker opts that commit out — as the very first run of this pipeline
+          # discovered, silently.
+          case "$MESSAGE" in
+            *'[skip release]'*)
+              echo "FAIL  the commit message contains the opt-out marker:"
+              printf '%s\n' "$MESSAGE" | sed 's/^/        /'
+              reject "The commit message of ${SHA} asks for no release: \"${subject}\"."
+              ;;
+          esac
+          echo "PASS  the commit message does not ask to skip the release"
+
+          # Tests is only half of what guards main.
+          echo "      querying ${LINT_WORKFLOW} for ${SHA}..."
+          check_lint
+          if [ "$lint_ok" != 'true' ]; then
+            echo "FAIL  ${LINT_WORKFLOW} did not report success for this commit."
+            reject "${lint_reason}. Nothing is released from a commit ${LINT_WORKFLOW} has not passed — fix it, re-run ${LINT_WORKFLOW} for the commit and re-run this workflow, or dispatch a release by hand to override."
+          fi
+          echo "PASS  ${LINT_WORKFLOW} succeeded — ${lint_seen}"
+
+          verdict true "Every condition met: releasing ${SHA} — \"${subject}\"."
+
+  # ---------------------------------------------------------------------------
+  # Build, tag and publish exactly the commit the gate approved.
+  # ---------------------------------------------------------------------------
   build:
     name: Build & publish
-    # Kept at one indent level so the folded scalar collapses to a single line.
-    #
-    # Tests also runs for pull requests, where head_branch is the source branch
-    # and head_sha is an ephemeral merge commit — never releasable. A PR opened
-    # *from* main would otherwise slip past the branch filter, so exclude it
-    # explicitly. Push and a manual Tests dispatch on main both qualify.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event != 'pull_request' &&
-      github.event.workflow_run.head_branch == 'main' &&
-      !contains(github.event.workflow_run.head_commit.message, '[skip release]'))
+    needs: gate
+    if: needs.gate.outputs.release == 'true'
     runs-on: ubuntu-latest
 
     env:
-      # The single source of truth for this run. Checkout, version computation,
-      # tag and release all use it, so the release can never end up attached to
-      # a different commit than the one whose tests passed.
-      RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      # The single source of truth for this run, decided by the gate and used by
+      # checkout, version computation, tag and release alike, so the release can
+      # never end up attached to a different commit than the one that was tested.
+      RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+      MAIN_FILE: tutor-course-bundles.php
 
     steps:
       - name: Checkout the tested commit
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_SHA }}
+          ref: ${{ needs.gate.outputs.sha }}
           fetch-depth: 0
           fetch-tags: true
 
       - name: Confirm the checkout
         run: |
           set -euo pipefail
+          if [ -z "${RELEASE_SHA}" ]; then
+            echo "The gate approved a release but produced no SHA; refusing." >&2
+            exit 1
+          fi
           head=$(git rev-parse HEAD)
           if [ "$head" != "$RELEASE_SHA" ]; then
             echo "Checked out ${head} but expected ${RELEASE_SHA}; refusing to release." >&2
@@ -68,21 +344,51 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          current=$(grep -iE '^\s*\*?\s*Version:' tutor-course-bundles.php | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
+
+          raw=$(grep -iE '^[[:space:]]*\*[[:space:]]*Version:' "$MAIN_FILE" | head -1 | sed -E 's/.*[Vv]ersion:[[:space:]]*//' | tr -d '[:space:]')
+
+          if [ -z "$raw" ]; then
+            echo "No Version header found in ${MAIN_FILE}; aborting." >&2
+            exit 1
+          fi
+
+          # Validate the whole header value instead of grepping three digits out
+          # of it. A malformed header ("1.0", "v1.2.3", "1.0.0.0", "next") stops
+          # the build here rather than silently producing a nonsense tag, and
+          # there is deliberately no default to fall back to: guessing a version
+          # would publish a release nobody asked for.
+          if ! printf '%s' "$raw" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$'; then
+            echo "Version header '${raw}' is not semver; aborting." >&2
+            exit 1
+          fi
+
+          # A pre-release or build suffix on the header means "this version is
+          # not released yet", not "release a version called 1.0.0-dev". Strip it
+          # deliberately: the release, the tag and every stamped file use the
+          # numeric core only, so a tag like v1.0.0-dev can never be created and
+          # the suffix never reaches a site's plugin list.
+          current=${raw%%[-+]*}
+          if [ "$current" != "$raw" ]; then
+            echo "Header '${raw}' is a pre-release; releasing its core ${current}."
+          fi
+
           latest_tag=$(git tag --list 'v*' --sort=-v:refname | grep -oE '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 | sed 's/^v//' || true)
-          echo "header=${current:-none}  latest_tag=${latest_tag:-none}"
+          echo "header=${raw}  core=${current}  latest_tag=${latest_tag:-none}"
 
           if [ -z "${latest_tag}" ]; then
             # First release: the header is the version.
-            next="${current:-0.1.0}"
+            next="$current"
           else
             higher=$(printf '%s\n%s\n' "$current" "$latest_tag" | sort -V | tail -1)
-            if [ -n "$current" ] && [ "$higher" = "$current" ] && [ "$current" != "$latest_tag" ]; then
+            if [ "$higher" = "$current" ] && [ "$current" != "$latest_tag" ]; then
               # A human bumped the header past the last tag: honour it, which is
-              # how a MINOR or MAJOR release is requested.
+              # how a MINOR or MAJOR release is requested. Bumping the header to
+              # 1.1.0-dev during development asks for 1.1.0 next.
               next="$current"
             else
-              # Otherwise auto-bump the PATCH from the newest tag.
+              # Otherwise auto-bump the PATCH from the newest tag. This is also
+              # the path taken when the header still names an already-released
+              # version, with or without a suffix.
               IFS=. read -r MA MI PA <<< "$latest_tag"
               next="${MA}.${MI}.$((PA + 1))"
             fi
@@ -111,20 +417,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Plugin header and the runtime constant.
-          sed -i -E "s/^([[:space:]]*\*[[:space:]]*Version:[[:space:]]*).*/\1${NEXT}/" tutor-course-bundles.php
-          sed -i -E "s/('TCB_VERSION',[[:space:]]*')[0-9][0-9.]*(')/\1${NEXT}\2/" tutor-course-bundles.php
+          # Plugin header and the runtime constant. The value pattern is [^']*
+          # rather than [0-9.]* on purpose: the constant may currently hold a
+          # pre-release string such as 1.0.0-dev, and a digits-only pattern
+          # would leave the suffix behind.
+          sed -i -E "s/^([[:space:]]*\*[[:space:]]*Version:[[:space:]]*).*/\1${NEXT}/" "$MAIN_FILE"
+          sed -i -E "s/('TCB_VERSION',[[:space:]]*')[^']*(')/\1${NEXT}\2/" "$MAIN_FILE"
 
           # readme.txt is what WordPress shows as the installed version.
           sed -i -E "s/^(Stable tag:[[:space:]]*).*/\1${NEXT}/" readme.txt
 
           # The translation template carries the version in its header.
-          sed -i -E "s/(Project-Id-Version: Tutor Course Bundles )[0-9][0-9.]*/\1${NEXT}/" languages/tutor-course-bundles.pot
+          sed -i -E "s/(Project-Id-Version: Tutor Course Bundles )[0-9][0-9A-Za-z.+-]*/\1${NEXT}/" languages/tutor-course-bundles.pot
 
           # Kept in step so the unit suite exercises the released version.
-          sed -i -E "s/('TCB_VERSION',[[:space:]]*')[0-9][0-9.]*(')/\1${NEXT}\2/" tests/bootstrap-unit.php
+          sed -i -E "s/('TCB_VERSION',[[:space:]]*')[^']*(')/\1${NEXT}\2/" tests/bootstrap-unit.php
 
           # Every location must now agree, or the build is not what it claims.
+          # Values are read and compared whole, so a leftover suffix fails here
+          # instead of being grepped away into a version that looks plausible.
           check() {
             local label="$1" found="$2"
             if [ "$found" != "$NEXT" ]; then
@@ -135,15 +446,15 @@ jobs:
           }
 
           echo "Stamped ${NEXT}:"
-          check 'plugin header' "$(grep -E '^[[:space:]]*\*[[:space:]]*Version:' tutor-course-bundles.php | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          check 'TCB_VERSION' "$(grep -E "'TCB_VERSION'" tutor-course-bundles.php | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          check 'readme.txt Stable tag' "$(grep -E '^Stable tag:' readme.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          check 'languages POT header' "$(grep -E 'Project-Id-Version:' languages/tutor-course-bundles.pot | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-          check 'tests/bootstrap-unit.php' "$(grep -E "'TCB_VERSION'" tests/bootstrap-unit.php | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          check 'plugin header' "$(grep -iE '^[[:space:]]*\*[[:space:]]*Version:' "$MAIN_FILE" | head -1 | sed -E 's/.*[Vv]ersion:[[:space:]]*//' | tr -d '[:space:]')"
+          check 'TCB_VERSION' "$(grep -E "'TCB_VERSION'" "$MAIN_FILE" | head -1 | sed -E "s/.*'TCB_VERSION',[[:space:]]*'([^']*)'.*/\1/")"
+          check 'readme.txt Stable tag' "$(grep -E '^Stable tag:' readme.txt | head -1 | sed -E 's/^Stable tag:[[:space:]]*//' | tr -d '[:space:]')"
+          check 'languages POT header' "$(grep -E 'Project-Id-Version:' languages/tutor-course-bundles.pot | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.+-]*' | head -1)"
+          check 'tests/bootstrap-unit.php' "$(grep -E "'TCB_VERSION'" tests/bootstrap-unit.php | head -1 | sed -E "s/.*'TCB_VERSION',[[:space:]]*'([^']*)'.*/\1/")"
 
           # A stray sed must not be allowed to ship broken PHP.
           if command -v php >/dev/null 2>&1; then
-            php -l tutor-course-bundles.php
+            php -l "$MAIN_FILE"
             php -l tests/bootstrap-unit.php
           fi
 
