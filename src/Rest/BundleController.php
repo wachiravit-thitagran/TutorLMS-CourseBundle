@@ -525,7 +525,9 @@ final class BundleController {
 	 * @param \WP_REST_Request $request Request.
 	 */
 	public function get_courses( \WP_REST_Request $request ): \WP_REST_Response {
-		$courses = $this->bundles->get_courses( (int) $request['id'] );
+		$bundle_id           = (int) $request['id'];
+		$include_unpublished = Capabilities::can_edit_bundle( $bundle_id );
+		$courses             = $this->bundles->get_courses( $bundle_id, ! $include_unpublished );
 
 		return new \WP_REST_Response(
 			array_map( static fn( BundleCourse $course ): array => $course->to_array(), $courses ),
@@ -576,10 +578,12 @@ final class BundleController {
 	 *
 	 * @param \WP_REST_Request $request Request.
 	 */
-	public function reorder_courses( \WP_REST_Request $request ): \WP_REST_Response {
+	public function reorder_courses( \WP_REST_Request $request ) {
 		$ids = array_map( 'absint', (array) $request['course_ids'] );
 
-		$this->bundles->reorder( (int) $request['id'], $ids );
+		if ( ! $this->bundles->reorder( (int) $request['id'], $ids ) ) {
+			return new \WP_Error( 'tcb_invalid_course_order', __( 'Course order must contain every bundle course exactly once.', 'tutor-course-bundles' ), array( 'status' => 400 ) );
+		}
 
 		return new \WP_REST_Response( array( 'reordered' => true ), 200 );
 	}
@@ -611,9 +615,10 @@ final class BundleController {
 		$data['stats'] = $this->bundles->get_stats( $bundle->get_id() );
 
 		if ( $full ) {
-			$data['courses'] = array_map(
+			$include_unpublished = Capabilities::can_edit_bundle( $bundle->get_id() );
+			$data['courses']      = array_map(
 				static fn( BundleCourse $course ): array => $course->to_array(),
-				$this->bundles->get_courses( $bundle->get_id() )
+				$this->bundles->get_courses( $bundle->get_id(), ! $include_unpublished )
 			);
 		}
 

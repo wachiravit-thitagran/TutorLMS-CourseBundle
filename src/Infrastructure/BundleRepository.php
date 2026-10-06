@@ -245,9 +245,11 @@ final class BundleRepository {
 	 *
 	 * @param int                              $bundle_id Bundle post ID.
 	 * @param array<int, array<string, mixed>> $items     Each with course_id, is_required, unlock_* keys.
-	 * @return array{added: int[], removed: int[], kept: int[]}
+	 * @return array{added: int[], removed: int[], kept: int[]}|\WP_Error
 	 */
-	public function set_courses( int $bundle_id, array $items ): array {
+	public function set_courses( int $bundle_id, array $items ): array|\WP_Error {
+		global $wpdb;
+
 		$existing = $this->get_course_ids( $bundle_id );
 		$incoming = array();
 		$position = 0;
@@ -256,7 +258,11 @@ final class BundleRepository {
 			$course_id = (int) ( $item['course_id'] ?? 0 );
 
 			if ( $course_id <= 0 || isset( $incoming[ $course_id ] ) ) {
-				continue; // Silently drop duplicates and junk.
+				continue;
+			}
+
+			if ( get_post_type( $course_id ) !== \SpaceWork\TutorCourseBundles\Compatibility::course_post_type() ) {
+				return new \WP_Error( 'tcb_not_a_course', __( 'One of the selected items is not a Tutor LMS course.', 'tutor-course-bundles' ) );
 			}
 
 			$incoming[ $course_id ] = array(
@@ -275,16 +281,37 @@ final class BundleRepository {
 		$to_add       = array_diff( $incoming_ids, $existing );
 		$kept         = array_intersect( $existing, $incoming_ids );
 
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return new \WP_Error( 'tcb_transaction_failed', __( 'Could not start the bundle update transaction.', 'tutor-course-bundles' ) );
+		}
+
 		foreach ( $to_remove as $course_id ) {
-			$this->remove_course( $bundle_id, (int) $course_id );
+			if ( ! $this->remove_course( $bundle_id, (int) $course_id ) ) {
+				$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				Cache::flush_bundle( $bundle_id );
+				return new \WP_Error( 'tcb_remove_course_failed', __( 'Could not update the bundle course list.', 'tutor-course-bundles' ) );
+			}
 		}
 
 		foreach ( $incoming as $course_id => $data ) {
 			if ( in_array( $course_id, $to_add, true ) ) {
-				$this->add_course( $bundle_id, (int) $course_id, $data );
-			} else {
-				$this->update_course( $bundle_id, (int) $course_id, $data );
+				$result = $this->add_course( $bundle_id, (int) $course_id, $data );
+				if ( is_wp_error( $result ) ) {
+					$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+					Cache::flush_bundle( $bundle_id );
+					return $result;
+				}
+			} elseif ( ! $this->update_course( $bundle_id, (int) $course_id, $data ) ) {
+				$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				Cache::flush_bundle( $bundle_id );
+				return new \WP_Error( 'tcb_update_course_failed', __( 'Could not update the bundle course list.', 'tutor-course-bundles' ) );
 			}
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			Cache::flush_bundle( $bundle_id );
+			return new \WP_Error( 'tcb_commit_failed', __( 'Could not commit the bundle course update.', 'tutor-course-bundles' ) );
 		}
 
 		Cache::flush_bundle( $bundle_id );
@@ -362,14 +389,43 @@ final class BundleRepository {
 	 * @param int[] $course_ids Course IDs in the desired order.
 	 */
 	public function reorder( int $bundle_id, array $course_ids ): bool {
-		$position = 0;
+		global $wpdb;
 
+		$course_ids = array_values( array_filter( array_map( 'absint', $course_ids ) ) );
+		if ( count( $course_ids ) !== count( array_unique( $course_ids ) ) ) {
+			return false;
+		}
+
+		$current  = $this->get_course_ids( $bundle_id );
+		$expected = $current;
+		$received = $course_ids;
+		sort( $expected );
+		sort( $received );
+
+		if ( $expected !== $received ) {
+			return false;
+		}
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			return false;
+		}
+
+		$position = 0;
 		foreach ( $course_ids as $course_id ) {
-			$this->update_course( $bundle_id, (int) $course_id, array( 'position' => $position++ ) );
+			if ( ! $this->update_course( $bundle_id, (int) $course_id, array( 'position' => $position++ ) ) ) {
+				$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+				Cache::flush_bundle( $bundle_id );
+				return false;
+			}
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) { // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			$wpdb->query( 'ROLLBACK' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+			Cache::flush_bundle( $bundle_id );
+			return false;
 		}
 
 		Cache::flush_bundle( $bundle_id );
-
 		do_action( 'tcb/bundle/courses_reordered', $bundle_id, $course_ids );
 
 		return true;

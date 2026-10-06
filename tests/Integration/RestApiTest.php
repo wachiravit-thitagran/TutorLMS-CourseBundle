@@ -109,6 +109,29 @@ final class RestApiTest extends TestCase {
 	}
 
 	/**
+	 * Public bundle payloads must not disclose unpublished child courses.
+	 */
+	public function test_public_bundle_hides_unpublished_courses(): void {
+		$courses = $this->seeder->courses( 2 );
+		$bundle  = $this->seeder->bundle( array( 'courses' => $courses ) );
+
+		wp_update_post(
+			array(
+				'ID'          => $courses[1],
+				'post_status' => 'draft',
+			)
+		);
+
+		wp_set_current_user( 0 );
+		$response = $this->request( 'GET', '/bundles/' . $bundle );
+
+		$this->assertSame( 200, $response->get_status() );
+		$data = $response->get_data();
+		$this->assertCount( 1, $data['courses'] );
+		$this->assertSame( $courses[0], $data['courses'][0]['course_id'] );
+	}
+
+	/**
 	 * A draft bundle is invisible to the public but readable by its author.
 	 */
 	public function test_draft_bundles_are_hidden_from_the_public(): void {
@@ -261,6 +284,26 @@ final class RestApiTest extends TestCase {
 
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertSame( $reversed, $this->seeder->repository()->get_course_ids( $bundle ) );
+	}
+
+	/**
+	 * A partial or duplicate ordering payload must be rejected without changing
+	 * the stored order.
+	 */
+	public function test_reordering_requires_every_course_exactly_once(): void {
+		$courses = $this->seeder->courses( 3 );
+		$bundle  = $this->seeder->bundle( array( 'courses' => $courses ) );
+
+		wp_set_current_user( $this->seeder->admin() );
+
+		$response = $this->request(
+			'PUT',
+			'/bundles/' . $bundle . '/courses/order',
+			array( 'course_ids' => array( $courses[0], $courses[2] ) )
+		);
+
+		$this->assertSame( 400, $response->get_status() );
+		$this->assertSame( $courses, $this->seeder->repository()->get_course_ids( $bundle ) );
 	}
 
 	/**
