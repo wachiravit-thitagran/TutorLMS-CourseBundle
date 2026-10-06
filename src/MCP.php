@@ -47,7 +47,8 @@ final class MCP {
 	public static function register_abilities(): void {
 		$definitions = array(
 			'list-bundles'        => array(
-				'label'      => 'List Course Bundles',
+				'label'       => 'List Course Bundles',
+				'description' => 'Lists course bundles with optional pagination, search, and category filtering.',
 				'method'     => 'GET',
 				'route'      => '/tcb/v1/bundles',
 				'readonly'   => true,
@@ -66,7 +67,8 @@ final class MCP {
 				),
 			),
 			'get-bundle'          => array(
-				'label'      => 'Get Course Bundle',
+				'label'       => 'Get Course Bundle',
+				'description' => 'Retrieves the details and configuration of a course bundle by ID.',
 				'method'     => 'GET',
 				'route'      => '/tcb/v1/bundles/{id}',
 				'readonly'   => true,
@@ -79,7 +81,8 @@ final class MCP {
 				'required'   => array( 'id' ),
 			),
 			'create-bundle'       => array(
-				'label'      => 'Create Course Bundle',
+				'label'       => 'Create Course Bundle',
+				'description' => 'Creates a new course bundle using the supplied title, content, pricing, status, and access settings.',
 				'method'     => 'POST',
 				'route'      => '/tcb/v1/bundles',
 				'readonly'   => false,
@@ -87,7 +90,8 @@ final class MCP {
 				'required'   => array( 'title' ),
 			),
 			'update-bundle'       => array(
-				'label'      => 'Update Course Bundle',
+				'label'       => 'Update Course Bundle',
+				'description' => 'Updates the editable properties of an existing course bundle.',
 				'method'     => 'PATCH',
 				'route'      => '/tcb/v1/bundles/{id}',
 				'readonly'   => false,
@@ -104,6 +108,7 @@ final class MCP {
 			),
 			'delete-bundle'       => array(
 				'label'       => 'Delete Course Bundle',
+				'description' => 'Deletes the specified course bundle according to the plugin\'s normal deletion rules.',
 				'method'      => 'DELETE',
 				'route'       => '/tcb/v1/bundles/{id}',
 				'readonly'    => false,
@@ -117,7 +122,8 @@ final class MCP {
 				'required'    => array( 'id' ),
 			),
 			'get-bundle-progress' => array(
-				'label'      => 'Get Bundle Progress',
+				'label'       => 'Get Bundle Progress',
+				'description' => 'Retrieves learner progress information for the courses contained in a bundle.',
 				'method'     => 'GET',
 				'route'      => '/tcb/v1/bundles/{id}/progress',
 				'readonly'   => true,
@@ -170,7 +176,7 @@ final class MCP {
 			'tutorlms-bundle/' . $name,
 			array(
 				'label'               => (string) $definition['label'],
-				'description'         => (string) $definition['label'] . ' through the plugin REST contract.',
+				'description'         => (string) $definition['description'],
 				'category'            => 'tutorlms-bundle',
 				'input_schema'        => array(
 					'type'       => 'object',
