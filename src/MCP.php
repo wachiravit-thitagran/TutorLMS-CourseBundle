@@ -49,10 +49,10 @@ final class MCP {
 			'list-bundles'        => array(
 				'label'       => 'List Course Bundles',
 				'description' => 'Lists course bundles with optional pagination, search, and category filtering.',
-				'method'     => 'GET',
-				'route'      => '/tcb/v1/bundles',
-				'readonly'   => true,
-				'properties' => array(
+				'method'      => 'GET',
+				'route'       => '/tcb/v1/bundles',
+				'readonly'    => true,
+				'properties'  => array(
 					'page'     => array(
 						'type'    => 'integer',
 						'minimum' => 1,
@@ -69,33 +69,33 @@ final class MCP {
 			'get-bundle'          => array(
 				'label'       => 'Get Course Bundle',
 				'description' => 'Retrieves the details and configuration of a course bundle by ID.',
-				'method'     => 'GET',
-				'route'      => '/tcb/v1/bundles/{id}',
-				'readonly'   => true,
-				'properties' => array(
+				'method'      => 'GET',
+				'route'       => '/tcb/v1/bundles/{id}',
+				'readonly'    => true,
+				'properties'  => array(
 					'id' => array(
 						'type'    => 'integer',
 						'minimum' => 1,
 					),
 				),
-				'required'   => array( 'id' ),
+				'required'    => array( 'id' ),
 			),
 			'create-bundle'       => array(
 				'label'       => 'Create Course Bundle',
 				'description' => 'Creates a new course bundle using the supplied title, content, pricing, status, and access settings.',
-				'method'     => 'POST',
-				'route'      => '/tcb/v1/bundles',
-				'readonly'   => false,
-				'properties' => self::bundle_fields(),
-				'required'   => array( 'title' ),
+				'method'      => 'POST',
+				'route'       => '/tcb/v1/bundles',
+				'readonly'    => false,
+				'properties'  => self::bundle_fields(),
+				'required'    => array( 'title' ),
 			),
 			'update-bundle'       => array(
 				'label'       => 'Update Course Bundle',
 				'description' => 'Updates the editable properties of an existing course bundle.',
-				'method'     => 'PATCH',
-				'route'      => '/tcb/v1/bundles/{id}',
-				'readonly'   => false,
-				'properties' => array_merge(
+				'method'      => 'PATCH',
+				'route'       => '/tcb/v1/bundles/{id}',
+				'readonly'    => false,
+				'properties'  => array_merge(
 					array(
 						'id' => array(
 							'type'    => 'integer',
@@ -104,7 +104,7 @@ final class MCP {
 					),
 					self::bundle_fields()
 				),
-				'required'   => array( 'id' ),
+				'required'    => array( 'id' ),
 			),
 			'delete-bundle'       => array(
 				'label'       => 'Delete Course Bundle',
@@ -124,10 +124,10 @@ final class MCP {
 			'get-bundle-progress' => array(
 				'label'       => 'Get Bundle Progress',
 				'description' => 'Retrieves learner progress information for the courses contained in a bundle.',
-				'method'     => 'GET',
-				'route'      => '/tcb/v1/bundles/{id}/progress',
-				'readonly'   => true,
-				'properties' => array(
+				'method'      => 'GET',
+				'route'       => '/tcb/v1/bundles/{id}/progress',
+				'readonly'    => true,
+				'properties'  => array(
 					'id'      => array(
 						'type'    => 'integer',
 						'minimum' => 1,
@@ -137,7 +137,7 @@ final class MCP {
 						'minimum' => 0,
 					),
 				),
-				'required'   => array( 'id' ),
+				'required'    => array( 'id' ),
 			),
 		);
 
@@ -180,8 +180,8 @@ final class MCP {
 				'category'            => 'tutorlms-bundle',
 				'input_schema'        => array(
 					'type'       => 'object',
-					'properties' => (array) $definition['properties'],
-					'required'   => isset( $definition['required'] ) ? (array) $definition['required'] : array(),
+					'properties'  => (array) $definition['properties'],
+					'required'    => isset( $definition['required'] ) ? (array) $definition['required'] : array(),
 				),
 				'execute_callback'    => static function ( array $input ) use ( $definition ) {
 					return self::dispatch(
