@@ -72,6 +72,7 @@ add_action(
 	'plugins_loaded',
 	static function (): void {
 		tcb()->boot();
+		\SpaceWork\TutorCourseBundles\MCP::register();
 	},
 	20
 );
