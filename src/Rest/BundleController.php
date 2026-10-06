@@ -525,7 +525,7 @@ final class BundleController {
 	 * @param \WP_REST_Request $request Request.
 	 */
 	public function get_courses( \WP_REST_Request $request ): \WP_REST_Response {
-		$bundle_id          = (int) $request['id'];
+		$bundle_id           = (int) $request['id'];
 		$include_unpublished = Capabilities::can_edit_bundle( $bundle_id );
 		$courses             = $this->bundles->get_courses( $bundle_id, ! $include_unpublished );
 
@@ -616,7 +616,7 @@ final class BundleController {
 
 		if ( $full ) {
 			$include_unpublished = Capabilities::can_edit_bundle( $bundle->get_id() );
-			$data['courses'] = array_map(
+			$data['courses']      = array_map(
 				static fn( BundleCourse $course ): array => $course->to_array(),
 				$this->bundles->get_courses( $bundle->get_id(), ! $include_unpublished )
 			);
