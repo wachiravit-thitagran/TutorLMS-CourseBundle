@@ -180,8 +180,8 @@ final class MCP {
 				'category'            => 'tutorlms-bundle',
 				'input_schema'        => array(
 					'type'       => 'object',
-					'properties'  => (array) $definition['properties'],
-					'required'    => isset( $definition['required'] ) ? (array) $definition['required'] : array(),
+					'properties' => (array) $definition['properties'],
+					'required'   => isset( $definition['required'] ) ? (array) $definition['required'] : array(),
 				),
 				'execute_callback'    => static function ( array $input ) use ( $definition ) {
 					return self::dispatch(
