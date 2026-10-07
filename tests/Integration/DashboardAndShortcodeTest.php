@@ -253,7 +253,7 @@ final class DashboardAndShortcodeTest extends TestCase {
 		$this->assertStringContainsString( 'Grid one', $html );
 		$this->assertStringContainsString( 'Grid two', $html );
 		$this->assertStringNotContainsString( 'Hidden draft', $html );
-		$this->assertSame( 2, substr_count( $html, 'tcb-bundle-card ' ) );
+		$this->assertSame( 2, substr_count( $html, '<article class="tcb-bundle-card ' ) );
 	}
 
 	/**
