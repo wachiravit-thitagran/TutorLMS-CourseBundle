@@ -616,7 +616,7 @@ final class BundleController {
 
 		if ( $full ) {
 			$include_unpublished = Capabilities::can_edit_bundle( $bundle->get_id() );
-			$data['courses']      = array_map(
+			$data['courses']     = array_map(
 				static fn( BundleCourse $course ): array => $course->to_array(),
 				$this->bundles->get_courses( $bundle->get_id(), ! $include_unpublished )
 			);
