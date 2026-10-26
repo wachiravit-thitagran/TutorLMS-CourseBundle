@@ -77,7 +77,7 @@ final class BundleController {
 						'category' => array(
 							'type'              => 'string',
 							'default'           => '',
-							'sanitize_callback' => 'sanitize_title',
+							'sanitize_callback' => static fn( $value ): string => sanitize_title( (string) $value ),
 						),
 					),
 				),
