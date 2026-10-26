@@ -92,6 +92,36 @@ final class RestApiTest extends TestCase {
 	}
 
 	/**
+	 * A missing or empty category must not become a WP_REST_Request object.
+	 *
+	 * WordPress REST passes (value, request, key) to sanitize callbacks.
+	 * Passing sanitize_title directly makes the request its fallback title,
+	 * which fatals when the category is an empty string.
+	 */
+	public function test_bundle_listing_handles_missing_and_empty_category(): void {
+		// This reproduces the production issue even when no bundles exist.
+		$empty_response = $this->request( 'GET', '/bundles' );
+
+		$this->assertSame( 200, $empty_response->get_status() );
+		$this->assertSame( array(), $empty_response->get_data() );
+
+		$bundle_id = $this->seeder->bundle( array( 'title' => 'Bundle category regression' ) );
+
+		foreach ( array( array(), array( 'category' => '' ), array( 'category' => '', 'page' => 1, 'per_page' => 5 ) ) as $params ) {
+			$response = $this->request( 'GET', '/bundles', $params );
+
+			$this->assertSame( 200, $response->get_status() );
+			$this->assertContains( $bundle_id, array_column( $response->get_data(), 'id' ) );
+		}
+
+		// Non-empty categories must still filter the list normally.
+		$filtered_response = $this->request( 'GET', '/bundles', array( 'category' => 'nonexistent-category-for-regression' ) );
+
+		$this->assertSame( 200, $filtered_response->get_status() );
+		$this->assertSame( array(), $filtered_response->get_data() );
+	}
+
+	/**
 	 * Anyone can browse published bundles.
 	 */
 	public function test_published_bundles_are_publicly_readable(): void {
