@@ -287,7 +287,8 @@ final class Plugin {
 			case BundleController::class:
 				return new BundleController(
 					$this->get( BundleRepository::class ),
-					$this->get( ProgressController::class )
+					$this->get( ProgressController::class ),
+					$this->get( CommerceManager::class )
 				);
 
 			case EnrollmentController::class:

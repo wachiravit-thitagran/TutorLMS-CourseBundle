@@ -51,6 +51,9 @@ final class Reports {
 	 * @return array<string, mixed>
 	 */
 	public function get_bundle_report( int $bundle_id ): array {
+		if ( ! Capabilities::can_view_bundle_reports( $bundle_id ) ) {
+			return array();
+		}
 		$counts        = $this->access->count_by_status( $bundle_id );
 		$learners      = $this->access->count_active_learners( $bundle_id );
 		$progress      = tcb()->get( ProgressController::class );
@@ -137,6 +140,10 @@ final class Reports {
 		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- checked above.
 		$bundle_id = isset( $_POST['bundle_id'] ) ? absint( wp_unslash( $_POST['bundle_id'] ) ) : 0;
 
+		if ( ! Capabilities::can_view_bundle_reports( $bundle_id ) ) {
+			wp_die( esc_html__( 'You do not have permission to export this bundle.', 'tutor-course-bundles' ), '', array( 'response' => 403 ) );
+		}
+
 		$filename = sprintf( 'tcb-enrollments-%s.csv', gmdate( 'Y-m-d' ) );
 
 		nocache_headers();
@@ -210,6 +217,11 @@ final class Reports {
 				'order'          => 'ASC',
 			)
 		);
+		$all_bundles = array_values( array_filter( $all_bundles, static fn( Bundle $bundle ): bool => Capabilities::can_view_bundle_reports( $bundle->get_id() ) ) );
+
+		if ( $bundle_id > 0 && ! Capabilities::can_view_bundle_reports( $bundle_id ) ) {
+			wp_die( esc_html__( 'You do not have permission to view this bundle.', 'tutor-course-bundles' ), '', array( 'response' => 403 ) );
+		}
 
 		if ( 0 === $bundle_id && array() !== $all_bundles ) {
 			$bundle_id = $all_bundles[0]->get_id();

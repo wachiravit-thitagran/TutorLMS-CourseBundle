@@ -20,6 +20,31 @@ use SpaceWork\TutorCourseBundles\Tutor\EnrollmentService;
  */
 final class EnrollmentServiceTest extends TestCase {
 
+	public function test_refund_during_enrollment_waits_for_the_shared_mutation_lock(): void {
+		$user = $this->seeder->student();
+		$built = $this->seeder->bundle_with_courses( 1 );
+		$access_id = 0;
+		$capture = static function ( $access ) use ( &$access_id ): void { $access_id = $access->id; };
+		$barrier = function ( $data ) use ( &$access_id ) {
+			$this->assertFalse( $this->enrollments->revoke_access( $access_id, BundleAccess::STATUS_REFUNDED, 'barrier' ) );
+			$this->assertNotFalse( wp_next_scheduled( EnrollmentService::HOOK_REVOKE_ACCESS, array( $access_id, BundleAccess::STATUS_REFUNDED, 'barrier' ) ) );
+			return $data;
+		};
+		add_action( 'tcb/access/granted', $capture );
+		add_filter( 'tutor_enroll_data', $barrier, 50 );
+		try {
+			$access = $this->enrollments->grant_access( $built['bundle'], $user, BundleAccess::SOURCE_MANUAL );
+		} finally {
+			remove_action( 'tcb/access/granted', $capture );
+			remove_filter( 'tutor_enroll_data', $barrier, 50 );
+		}
+		$this->assertNotWPError( $access );
+		do_action( EnrollmentService::HOOK_REVOKE_ACCESS, $access_id, BundleAccess::STATUS_REFUNDED, 'barrier' );
+		$this->assertNotEnrolled( $built['courses'][0], $user );
+		$this->assertSame( BundleAccess::STATUS_REFUNDED, $this->access->find( $access_id )->status );
+		$this->assertFalse( $this->enrollments->ensure_enrolled( $access, $built['courses'][0] ) );
+	}
+
 	private EnrollmentService $enrollments;
 	private AccessRepository $access;
 

@@ -32,9 +32,12 @@ defined( 'ABSPATH' ) || exit;
 final class EnrollmentService {
 
 	public const HOOK_PROCESS_BATCH   = 'tcb/job/process_enrollment_batch';
+	public const HOOK_EXPIRE_BATCH    = 'tcb/job/expire_access_batch';
+	public const HOOK_ACTIVATE_ACCESS = 'tcb/job/activate_access';
 	public const HOOK_EXPIRE_ACCESS   = 'tcb/cron/expire_access';
 	public const HOOK_SYNC_NEW_COURSE = 'tcb/job/sync_new_course';
 	public const HOOK_REMOVE_COURSE   = 'tcb/job/remove_course';
+	public const HOOK_REVOKE_ACCESS   = 'tcb/job/revoke_access';
 
 	private const DEFAULT_BATCH_SIZE = 20;
 	private const ACCESS_BATCH_SIZE  = 200;
@@ -65,7 +68,15 @@ final class EnrollmentService {
 		add_action( self::HOOK_PROCESS_BATCH, array( $this, 'process_batch_job' ), 10, 2 );
 		add_action( self::HOOK_SYNC_NEW_COURSE, array( $this, 'sync_new_course_job' ), 10, 3 );
 		add_action( self::HOOK_REMOVE_COURSE, array( $this, 'remove_course_job' ), 10, 3 );
+		add_action( self::HOOK_REVOKE_ACCESS, array( $this, 'revoke_access' ), 10, 3 );
 		add_action( self::HOOK_EXPIRE_ACCESS, array( $this, 'expire_due_access' ) );
+		add_action( self::HOOK_EXPIRE_BATCH, array( $this, 'expire_due_access' ), 10, 1 );
+		add_action( self::HOOK_ACTIVATE_ACCESS, array( $this, 'activate_access_job' ), 10, 1 );
+		add_filter( 'tutor_course_content_access', array( $this, 'filter_content_access' ), 100, 2 );
+		add_action( 'template_redirect', array( $this, 'guard_content_request' ), 0 );
+		foreach ( array( 'tutor_render_lesson_content', 'autoload_next_course_content' ) as $action ) {
+			add_action( 'wp_ajax_' . $action, array( $this, 'guard_content_ajax' ), -1 );
+		}
 
 		add_action( 'tcb/bundle/course_added', array( $this, 'on_course_added_to_bundle' ), 10, 2 );
 		add_action( 'tcb/bundle/course_removed', array( $this, 'on_course_removed_from_bundle' ), 10, 2 );
@@ -96,7 +107,7 @@ final class EnrollmentService {
 			return new \WP_Error( 'tcb_user_not_found', __( 'User not found.', 'tutor-course-bundles' ) );
 		}
 
-		$lock_key = sprintf( 'grant_%d_%d_%s_%d', $bundle_id, $user_id, $source_type, $source_id );
+		$lock_key = 'learner_' . $user_id;
 
 		$result = $this->locks->with_lock(
 			$lock_key,
@@ -123,7 +134,7 @@ final class EnrollmentService {
 
 				// Re-granting after a refund or expiry: reactivate the same row.
 				if ( BundleAccess::STATUS_ACTIVE !== $access->status ) {
-					$this->access->update(
+					if ( ! $this->access->update(
 						$access->id,
 						array(
 							'status'     => BundleAccess::STATUS_ACTIVE,
@@ -131,7 +142,9 @@ final class EnrollmentService {
 							'expires_at' => $expires_at,
 							'revoked_at' => null,
 						)
-					);
+					) ) {
+						return new \WP_Error( 'tcb_access_write_failed', __( 'The entitlement could not be reactivated.', 'tutor-course-bundles' ) );
+					}
 
 					$access = $this->access->find( $access->id ) ?? $access;
 				}
@@ -155,8 +168,6 @@ final class EnrollmentService {
 				 */
 				do_action( 'tcb/access/granted', $access );
 
-				$this->enroll_all_courses( $access, (bool) ( $args['defer'] ?? false ) );
-
 				Cache::flush_user_progress( $user_id, $bundle_id );
 
 				return $access;
@@ -170,6 +181,9 @@ final class EnrollmentService {
 			return $existing ?? new \WP_Error( 'tcb_grant_busy', __( 'This grant is already being processed.', 'tutor-course-bundles' ) );
 		}
 
+		if ( $result instanceof BundleAccess ) {
+			$this->enroll_all_courses( $result, (bool) ( $args['defer'] ?? false ) );
+		}
 		return $result;
 	}
 
@@ -183,6 +197,41 @@ final class EnrollmentService {
 	 * @param bool         $force_defer Always queue, even for small bundles.
 	 */
 	public function enroll_all_courses( BundleAccess $access, bool $force_defer = false ): void {
+		if ( BundleAccess::STATUS_ACTIVE === $access->status && $access->starts_at && strtotime( $access->starts_at . ' UTC' ) > time() ) {
+			$args = array( $access->id );
+			if ( ! wp_next_scheduled( self::HOOK_ACTIVATE_ACCESS, $args ) ) {
+				wp_schedule_single_event( (int) strtotime( $access->starts_at . ' UTC' ), self::HOOK_ACTIVATE_ACCESS, $args );
+			}
+		}
+		$result = $this->locks->with_lock(
+			'learner_' . $access->user_id,
+			function () use ( $access, $force_defer ): bool {
+				$fresh = $this->access->find( $access->id );
+				if ( $fresh instanceof BundleAccess && ! $fresh->is_usable() && BundleAccess::STATUS_ACTIVE === $fresh->status && ! $fresh->is_expired() && $fresh->starts_at ) {
+					foreach ( $this->bundles->get_course_ids( $fresh->bundle_id, true ) as $course_id ) {
+						$this->enrollments->record(
+							array(
+								'bundle_access_id' => $fresh->id,
+								'bundle_id'        => $fresh->bundle_id,
+								'course_id'        => (int) $course_id,
+								'user_id'          => $fresh->user_id,
+								'status'           => EnrollmentRepository::STATUS_PENDING,
+							)
+						);
+					}
+				}
+				if ( $fresh instanceof BundleAccess && $fresh->is_usable() ) {
+					$this->enroll_all_courses_locked( $fresh, $force_defer );
+				}
+				return true;
+			}
+		);
+		if ( null === $result ) {
+			$this->schedule_batch( $access->id, $this->bundles->get_course_ids( $access->bundle_id, true ) );
+		}
+	}
+
+	private function enroll_all_courses_locked( BundleAccess $access, bool $force_defer ): void {
 		$course_ids = $this->bundles->get_course_ids( $access->bundle_id, true );
 
 		if ( array() === $course_ids ) {
@@ -193,7 +242,7 @@ final class EnrollmentService {
 
 		if ( ! $force_defer && count( $course_ids ) <= $threshold ) {
 			foreach ( $course_ids as $course_id ) {
-				$this->ensure_enrolled( $access, (int) $course_id );
+				$this->ensure_enrolled_locked( $access, (int) $course_id );
 			}
 
 			return;
@@ -261,16 +310,32 @@ final class EnrollmentService {
 	 * @param int          $course_id Course post ID.
 	 */
 	public function ensure_enrolled( BundleAccess $access, int $course_id ): bool {
+		$result = $this->locks->with_lock(
+			'learner_' . $access->user_id,
+			fn(): bool => $this->ensure_enrolled_locked( $access, $course_id )
+		);
+		if ( null === $result ) {
+			$this->schedule_batch( $access->id, array( $course_id ) );
+		}
+		return true === $result;
+	}
+
+	/** Recheck entitlement and shared Tutor enrollment while holding the same lock as revocation. */
+	private function ensure_enrolled_locked( BundleAccess $access, int $course_id ): bool {
 		$fresh_access = $this->access->find( $access->id );
 
 		if ( ! $fresh_access instanceof BundleAccess || ! $fresh_access->is_usable() ) {
 			return false;
 		}
 
+		if ( ! in_array( $course_id, $this->bundles->get_course_ids( $fresh_access->bundle_id, true ), true ) ) {
+			return false;
+		}
+
 		$access       = $fresh_access;
 		$existing_row = $this->enrollments->find( $access->id, $course_id );
 
-		if ( null !== $existing_row && EnrollmentRepository::STATUS_ACTIVE === $existing_row['status'] ) {
+		if ( null !== $existing_row && EnrollmentRepository::STATUS_ACTIVE === $existing_row['status'] && $this->tutor->is_enrolled( $course_id, $access->user_id ) ) {
 			return true;
 		}
 
@@ -337,7 +402,7 @@ final class EnrollmentService {
 			$this->resolver->tag_origin( (int) $enrollment_id, $access->id, $access->bundle_id );
 		}
 
-		$this->enrollments->record(
+		$recorded = $this->enrollments->record(
 			array(
 				'bundle_access_id'    => $access->id,
 				'bundle_id'           => $access->bundle_id,
@@ -349,6 +414,11 @@ final class EnrollmentService {
 				'error_code'          => null,
 			)
 		);
+
+		if ( is_wp_error( $recorded ) || ! $recorded ) {
+			$this->schedule_batch( $access->id, array( $course_id ) );
+			return false;
+		}
 
 		Logger::audit(
 			Logger::ACTION_COURSE_ENROLLED,
@@ -385,6 +455,21 @@ final class EnrollmentService {
 	 */
 	public function revoke_access( int $access_id, string $status = BundleAccess::STATUS_REVOKED, string $reason = '' ): bool {
 		$access = $this->access->find( $access_id );
+		if ( ! $access instanceof BundleAccess ) {
+			return false;
+		}
+		$result = $this->locks->with_lock( 'learner_' . $access->user_id, fn(): bool => $this->revoke_access_locked( $access_id, $status, $reason ) );
+		if ( true !== $result ) {
+			$args = array( $access_id, $status, $reason );
+			if ( ! wp_next_scheduled( self::HOOK_REVOKE_ACCESS, $args ) ) {
+				wp_schedule_single_event( time() + 10, self::HOOK_REVOKE_ACCESS, $args );
+			}
+		}
+		return true === $result;
+	}
+
+	private function revoke_access_locked( int $access_id, string $status, string $reason ): bool {
+		$access = $this->access->find( $access_id );
 
 		if ( ! $access instanceof BundleAccess ) {
 			return false;
@@ -396,51 +481,31 @@ final class EnrollmentService {
 
 		foreach ( $rows as $row ) {
 			$course_id = (int) $row['course_id'];
-
-			if ( EnrollmentRepository::STATUS_ACTIVE !== $row['status'] ) {
-				if ( in_array( $row['status'], array( EnrollmentRepository::STATUS_PENDING, EnrollmentRepository::STATUS_FAILED ), true ) ) {
-					$this->enrollments->update(
-						(int) $row['id'],
-						array(
-							'status'     => EnrollmentRepository::STATUS_REVOKED,
-							'revoked_at' => current_time( 'mysql', true ),
-						)
-					);
-				}
-
+			if ( ! in_array( $row['status'], array( EnrollmentRepository::STATUS_ACTIVE, EnrollmentRepository::STATUS_PENDING, EnrollmentRepository::STATUS_FAILED ), true ) ) {
 				continue;
 			}
-
-			// Mark our mapping row inactive first, so the alternative-access
-			// query below cannot count this very grant as an alternative.
-			$this->enrollments->update(
+			if ( $this->resolver->can_revoke_course( $access->user_id, $course_id, $access_id ) ) {
+				if ( ! $this->tutor->cancel_enrollment( $course_id, $access->user_id ) ) {
+					return false;
+				}
+				$revoked[] = $course_id;
+			} else {
+				$kept[] = $course_id;
+			}
+			if ( ! $this->enrollments->update(
 				(int) $row['id'],
 				array(
 					'status'     => EnrollmentRepository::STATUS_REVOKED,
 					'revoked_at' => current_time( 'mysql', true ),
 				)
-			);
-
-			if ( $this->resolver->can_revoke_course( $access->user_id, $course_id, $access_id ) ) {
-				$this->tutor->cancel_enrollment( $course_id, $access->user_id );
-				$revoked[] = $course_id;
-
-				Logger::audit(
-					Logger::ACTION_COURSE_REVOKED,
-					array(
-						'course_id' => $course_id,
-						'access_id' => $access_id,
-						'reason'    => $reason,
-					),
-					$access->bundle_id,
-					$access->user_id
-				);
-			} else {
-				$kept[] = $course_id;
+			) ) {
+				return false;
 			}
 		}
 
-		$this->access->terminate( $access_id, $status );
+		if ( ! $this->access->terminate( $access_id, $status ) ) {
+			return false;
+		}
 		$this->cancel_access_jobs( $access_id );
 
 		Logger::audit(
@@ -487,16 +552,73 @@ final class EnrollmentService {
 	/**
 	 * Hourly cron: retire entitlements whose expiry has passed.
 	 */
-	public function expire_due_access(): void {
-		foreach ( $this->access->find_expired_active( 50 ) as $access ) {
-			$this->revoke_access( $access->id, BundleAccess::STATUS_EXPIRED, 'expiry_reached' );
+	public function expire_due_access( int $before_id = 0 ): void {
+		$items = $this->access->find_expired_active( 50, $before_id );
+		foreach ( $items as $access ) {
+			if ( $this->revoke_access( $access->id, BundleAccess::STATUS_EXPIRED, 'expiry_reached' ) ) {
+				Logger::audit( Logger::ACTION_ACCESS_EXPIRED, array( 'access_id' => $access->id ), $access->bundle_id, $access->user_id );
+			}
+		}
+		if ( count( $items ) === 50 ) {
+			$last = end( $items );
+			wp_schedule_single_event( time() + 10, self::HOOK_EXPIRE_BATCH, array( $last->id ) );
+		}
+	}
 
-			Logger::audit(
-				Logger::ACTION_ACCESS_EXPIRED,
-				array( 'access_id' => $access->id ),
-				$access->bundle_id,
-				$access->user_id
-			);
+	/** Activate a future-dated grant using the fresh ledger and membership. */
+	public function activate_access_job( int $access_id ): void {
+		$access = $this->access->find( $access_id );
+		if ( $access instanceof BundleAccess ) {
+			$this->enroll_all_courses( $access );
+		}
+	}
+
+	/** Tutor's final authorization filter: expiry takes effect before cron. */
+	public function filter_content_access( $allowed, $args ): bool {
+		if ( ! $allowed ) {
+			return false;
+		}
+		$course_id     = (int) ( $args['course_id'] ?? 0 );
+		$user_id       = get_current_user_id();
+		$enrollment_id = $this->tutor->get_enrollment_id( $course_id, $user_id );
+		if ( $enrollment_id <= 0 ) {
+			$enrollment_id = $this->tutor->find_enrollment_any_status( $course_id, $user_id );
+		}
+		if ( ! $this->resolver->is_plugin_owned( $enrollment_id ) ) {
+			return true;
+		}
+		return $this->resolver->user_has_alternative_access( $user_id, $course_id, 0 );
+	}
+
+	private function content_course_id( int $post_id ): int {
+		for ( $depth = 0; $post_id > 0 && $depth < 5; ++$depth ) {
+			$post = get_post( $post_id );
+			if ( ! $post instanceof \WP_Post ) {
+				break;
+			}
+			if ( $post->post_type === $this->tutor->course_post_type() ) {
+				return $post_id;
+			}
+			$post_id = (int) $post->post_parent;
+		}
+		return 0;
+	}
+
+	public function guard_content_request(): void {
+		if ( is_admin() || ! is_singular( array( 'lesson', 'tutor_quiz', 'tutor_assignments' ) ) ) {
+			return;
+		}
+		$course_id = $this->content_course_id( (int) get_queried_object_id() );
+		if ( $course_id && ! $this->filter_content_access( true, array( 'course_id' => $course_id ) ) ) {
+			wp_die( esc_html__( 'Your bundle access has expired.', 'tutor-course-bundles' ), '', array( 'response' => 403 ) );
+		}
+	}
+
+	public function guard_content_ajax(): void {
+		$post_id   = absint( $_POST['lesson_id'] ?? $_POST['post_id'] ?? 0 );
+		$course_id = $this->content_course_id( $post_id );
+		if ( $course_id && ! $this->filter_content_access( true, array( 'course_id' => $course_id ) ) ) {
+			wp_send_json_error( array( 'code' => 'tcb_access_expired' ), 403 );
 		}
 	}
 
@@ -533,6 +655,10 @@ final class EnrollmentService {
 		$bundle_id = (int) $bundle_id;
 		$course_id = (int) $course_id;
 		$before_id = (int) $before_id;
+		$bundle    = $this->bundles->find( $bundle_id );
+		if ( ! $bundle instanceof Bundle || ! $bundle->grants_new_courses() || ! in_array( $course_id, $this->bundles->get_course_ids( $bundle_id, true ), true ) ) {
+			return;
+		}
 
 		$result = $this->access->query(
 			array(
@@ -600,6 +726,10 @@ final class EnrollmentService {
 		$course_id = (int) $course_id;
 		$before_id = (int) $before_id;
 
+		if ( in_array( $course_id, $this->bundles->get_course_ids( $bundle_id ), true ) ) {
+			return;
+		}
+
 		$result = $this->access->query(
 			array(
 				'bundle_id' => $bundle_id,
@@ -610,22 +740,33 @@ final class EnrollmentService {
 		);
 
 		foreach ( $result['items'] as $access ) {
-			$row = $this->enrollments->find( $access->id, $course_id );
+			$removed = $this->locks->with_lock(
+				'learner_' . $access->user_id,
+				function () use ( $access, $course_id ): bool {
+					$row = $this->enrollments->find( $access->id, $course_id );
 
-			if ( null === $row || EnrollmentRepository::STATUS_ACTIVE !== $row['status'] ) {
-				continue;
-			}
+					if ( null === $row || EnrollmentRepository::STATUS_ACTIVE !== $row['status'] ) {
+						return true;
+					}
 
-			$this->enrollments->update(
-				(int) $row['id'],
-				array(
-					'status'     => EnrollmentRepository::STATUS_REVOKED,
-					'revoked_at' => current_time( 'mysql', true ),
-				)
+					if ( $this->resolver->can_revoke_course( $access->user_id, $course_id, $access->id ) && ! $this->tutor->cancel_enrollment( $course_id, $access->user_id ) ) {
+						return false;
+					}
+					if ( ! $this->enrollments->update(
+						(int) $row['id'],
+						array(
+							'status'     => EnrollmentRepository::STATUS_REVOKED,
+							'revoked_at' => current_time( 'mysql', true ),
+						)
+					) ) {
+						return false;
+					}
+					return true;
+				}
 			);
-
-			if ( $this->resolver->can_revoke_course( $access->user_id, $course_id, $access->id ) ) {
-				$this->tutor->cancel_enrollment( $course_id, $access->user_id );
+			if ( true !== $removed ) {
+				$this->schedule_course_job( self::HOOK_REMOVE_COURSE, $bundle_id, $course_id, $before_id );
+				return;
 			}
 		}
 

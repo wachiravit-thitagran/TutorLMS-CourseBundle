@@ -113,6 +113,12 @@ final class TutorAdapter {
 			return new \WP_Error( 'tcb_not_a_course', __( 'That post is not a Tutor LMS course.', 'tutor-course-bundles' ) );
 		}
 
+		// Payment covers ownership, but never overrides another access policy.
+		// Enroll-context policies deliberately do not grandfather existing access.
+		if ( ! apply_filters( 'tcb/enrollment/can_complete', true, $course_id, $user_id ) ) {
+			return new \WP_Error( 'tcb_enrollment_held', __( 'Course access is waiting for its requirements.', 'tutor-course-bundles' ) );
+		}
+
 		$existing = $this->get_enrollment_id( $course_id, $user_id );
 
 		if ( $existing > 0 ) {
@@ -158,9 +164,13 @@ final class TutorAdapter {
 		$pending = $this->find_enrollment_any_status( $course_id, $user_id );
 
 		if ( $pending > 0 ) {
-			$this->set_enrollment_status( $pending, 'completed' );
-
-			return $pending;
+			if ( ! apply_filters( 'tcb/enrollment/can_complete', true, $course_id, $user_id ) ) {
+				return new \WP_Error( 'tcb_enrollment_held', __( 'Course access is waiting for its requirements.', 'tutor-course-bundles' ) );
+			}
+			if ( $this->set_enrollment_status( $pending, 'completed' ) ) {
+				return $pending;
+			}
+			return new \WP_Error( 'tcb_enrollment_write_failed', __( 'The enrollment status could not be saved.', 'tutor-course-bundles' ) );
 		}
 
 		return new \WP_Error(
@@ -176,7 +186,8 @@ final class TutorAdapter {
 	 * @return array<string, mixed>
 	 */
 	public function force_completed_enrollment( $data ) {
-		if ( is_array( $data ) ) {
+		if ( is_array( $data ) && array() !== $data
+			&& apply_filters( 'tcb/enrollment/can_complete', true, (int) ( $data['post_parent'] ?? 0 ), (int) ( $data['post_author'] ?? 0 ) ) ) {
 			$data['post_status'] = 'completed';
 		}
 
@@ -189,7 +200,7 @@ final class TutorAdapter {
 	 * @param int $course_id Course post ID.
 	 * @param int $user_id   User ID.
 	 */
-	private function find_enrollment_any_status( int $course_id, int $user_id ): int {
+	public function find_enrollment_any_status( int $course_id, int $user_id ): int {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
@@ -218,26 +229,14 @@ final class TutorAdapter {
 			return false;
 		}
 
-		if ( $this->is_available() && method_exists( tutor_utils(), 'course_enrol_status_change' ) ) {
-			tutor_utils()->course_enrol_status_change( $enrollment_id, $status );
-			clean_post_cache( $enrollment_id );
-
-			return true;
-		}
-
 		global $wpdb;
-
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		$wpdb->update(
-			$wpdb->posts,
-			array( 'post_status' => $status ),
-			array( 'ID' => $enrollment_id ),
-			array( '%s' ),
-			array( '%d' )
-		);
-
+		do_action( 'tutor/course/enrol_status_change/before', $enrollment_id, $status );
+		$updated = $wpdb->update( $wpdb->posts, array( 'post_status' => $status ), array( 'ID' => $enrollment_id ), array( '%s' ), array( '%d' ) );
 		clean_post_cache( $enrollment_id );
-
+		if ( false === $updated || $status !== get_post_status( $enrollment_id ) ) {
+			return false;
+		}
+		do_action( 'tutor/course/enrol_status_change/after', $enrollment_id, $status );
 		return true;
 	}
 
