@@ -32,6 +32,11 @@ defined( 'ABSPATH' ) || exit;
  */
 final class CommerceManager {
 
+	/**
+	 * Number of nested aggregate saves suppressing early product synchronization.
+	 *
+	 * @var int
+	 */
 	private int $aggregate_save_depth = 0;
 
 	/**
@@ -140,7 +145,12 @@ final class CommerceManager {
 		}
 	}
 
-	/** Suppress the early save_post sync while a REST aggregate is written. */
+	/**
+	 * Suppress the early save_post sync while a REST aggregate is written.
+	 *
+	 * @param callable $save Aggregate persistence callback.
+	 * @return mixed Callback result.
+	 */
 	public function without_product_sync( callable $save ) {
 		++$this->aggregate_save_depth;
 		try {
@@ -150,7 +160,12 @@ final class CommerceManager {
 		}
 	}
 
-	/** Synchronize once, after final post and metadata persistence. */
+	/**
+	 * Synchronize once, after final post and metadata persistence.
+	 *
+	 * @param int $post_id Bundle post ID.
+	 * @return int|bool|\WP_Error Product ID, success flag, or synchronization error.
+	 */
 	public function sync_saved_bundle( int $post_id ) {
 		if ( ! Compatibility::woocommerce_active() || 'yes' !== get_option( 'tcb_wc_auto_product', 'yes' ) ) {
 			return true;

@@ -160,7 +160,11 @@ final class Capabilities {
 		return current_user_can( self::MANAGE ) || current_user_can( 'manage_options' );
 	}
 
-	/** Report capability grants access only to the caller's editable bundle. */
+	/**
+	 * Report capability grants access only to the caller's editable bundle.
+	 *
+	 * @param int $bundle_id Bundle post ID.
+	 */
 	public static function can_view_bundle_reports( int $bundle_id ): bool {
 		if ( self::current_user_can_manage() ) {
 			return true;

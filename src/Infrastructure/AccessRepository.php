@@ -454,7 +454,8 @@ final class AccessRepository {
 	/**
 	 * Entitlements that have passed their expiry but are still marked active.
 	 *
-	 * @param int $limit Batch size.
+	 * @param int $limit     Batch size.
+	 * @param int $before_id Continue below this entitlement ID.
 	 * @return BundleAccess[]
 	 */
 	public function find_expired_active( int $limit = 100, int $before_id = 0 ): array {

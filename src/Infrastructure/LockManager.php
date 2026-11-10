@@ -25,7 +25,11 @@ defined( 'ABSPATH' ) || exit;
 final class LockManager {
 
 	private const DEFAULT_TTL = 120;
-	/** @var array<string, self> Locks owned by this PHP connection. */
+	/**
+	 * Locks owned by this PHP connection.
+	 *
+	 * @var array<string, self>
+	 */
 	private static array $owners = array();
 
 	/**
@@ -41,6 +45,8 @@ final class LockManager {
 		if ( isset( self::$owners[ $name ] ) ) {
 			return false; // MySQL named locks are reentrant; our critical sections are not.
 		}
+		// Advisory lock ownership is connection state and must never use an object cache.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 		$acquired = '1' === (string) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $name, min( 10, max( 0, $ttl ) ) ) );
 		if ( $acquired ) {
 			self::$owners[ $name ] = $this;
@@ -61,6 +67,8 @@ final class LockManager {
 		}
 		// MySQL releases only locks belonging to this connection. Connection
 		// loss releases automatically; no expiring lease can be stolen mid-write.
+		// Releasing the connection-owned advisory lock requires an uncached SQL call.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
 		unset( self::$owners[ $name ] );
 	}

@@ -231,6 +231,12 @@ final class EnrollmentService {
 		}
 	}
 
+	/**
+	 * Enroll or queue bundle courses while holding the learner lock.
+	 *
+	 * @param BundleAccess $access      Entitlement to enroll.
+	 * @param bool         $force_defer Whether to always queue enrollment.
+	 */
 	private function enroll_all_courses_locked( BundleAccess $access, bool $force_defer ): void {
 		$course_ids = $this->bundles->get_course_ids( $access->bundle_id, true );
 
@@ -320,7 +326,12 @@ final class EnrollmentService {
 		return true === $result;
 	}
 
-	/** Recheck entitlement and shared Tutor enrollment while holding the same lock as revocation. */
+	/**
+	 * Recheck entitlement and shared Tutor enrollment under the revocation lock.
+	 *
+	 * @param BundleAccess $access    Entitlement to recheck.
+	 * @param int          $course_id Course post ID.
+	 */
 	private function ensure_enrolled_locked( BundleAccess $access, int $course_id ): bool {
 		$fresh_access = $this->access->find( $access->id );
 
@@ -468,6 +479,13 @@ final class EnrollmentService {
 		return true === $result;
 	}
 
+	/**
+	 * Revoke entitlement and owned enrollments while holding the learner lock.
+	 *
+	 * @param int    $access_id Entitlement row ID.
+	 * @param string $status    Terminal status.
+	 * @param string $reason    Audit note.
+	 */
 	private function revoke_access_locked( int $access_id, string $status, string $reason ): bool {
 		$access = $this->access->find( $access_id );
 
@@ -551,6 +569,8 @@ final class EnrollmentService {
 
 	/**
 	 * Hourly cron: retire entitlements whose expiry has passed.
+	 *
+	 * @param int $before_id Continue below this entitlement ID.
 	 */
 	public function expire_due_access( int $before_id = 0 ): void {
 		$items = $this->access->find_expired_active( 50, $before_id );
@@ -565,7 +585,11 @@ final class EnrollmentService {
 		}
 	}
 
-	/** Activate a future-dated grant using the fresh ledger and membership. */
+	/**
+	 * Activate a future-dated grant using the fresh ledger and membership.
+	 *
+	 * @param int $access_id Entitlement row ID.
+	 */
 	public function activate_access_job( int $access_id ): void {
 		$access = $this->access->find( $access_id );
 		if ( $access instanceof BundleAccess ) {
@@ -573,7 +597,12 @@ final class EnrollmentService {
 		}
 	}
 
-	/** Tutor's final authorization filter: expiry takes effect before cron. */
+	/**
+	 * Apply Tutor's final authorization filter so expiry takes effect before cron.
+	 *
+	 * @param bool                 $allowed Tutor authorization result.
+	 * @param array<string, mixed> $args    Content access context.
+	 */
 	public function filter_content_access( $allowed, $args ): bool {
 		if ( ! $allowed ) {
 			return false;
@@ -590,6 +619,11 @@ final class EnrollmentService {
 		return $this->resolver->user_has_alternative_access( $user_id, $course_id, 0 );
 	}
 
+	/**
+	 * Resolve a content post to its containing Tutor course.
+	 *
+	 * @param int $post_id Content post ID.
+	 */
 	private function content_course_id( int $post_id ): int {
 		for ( $depth = 0; $post_id > 0 && $depth < 5; ++$depth ) {
 			$post = get_post( $post_id );
@@ -604,6 +638,9 @@ final class EnrollmentService {
 		return 0;
 	}
 
+	/**
+	 * Deny expired bundle access before rendering course content.
+	 */
 	public function guard_content_request(): void {
 		if ( is_admin() || ! is_singular( array( 'lesson', 'tutor_quiz', 'tutor_assignments' ) ) ) {
 			return;
@@ -614,7 +651,12 @@ final class EnrollmentService {
 		}
 	}
 
+	/**
+	 * Deny expired bundle access before Tutor processes its content AJAX request.
+	 */
 	public function guard_content_ajax(): void {
+		// Read-only denial guard; the Tutor handler verifies its nonce before processing.
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing
 		$post_id   = absint( $_POST['lesson_id'] ?? $_POST['post_id'] ?? 0 );
 		$course_id = $this->content_course_id( $post_id );
 		if ( $course_id && ! $this->filter_content_access( true, array( 'course_id' => $course_id ) ) ) {

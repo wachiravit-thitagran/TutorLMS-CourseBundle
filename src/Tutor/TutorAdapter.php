@@ -231,9 +231,11 @@ final class TutorAdapter {
 
 		global $wpdb;
 		do_action( 'tutor/course/enrol_status_change/before', $enrollment_id, $status );
+		// Update the resolved enrollment directly, then invalidate its post cache below.
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
 		$updated = $wpdb->update( $wpdb->posts, array( 'post_status' => $status ), array( 'ID' => $enrollment_id ), array( '%s' ), array( '%d' ) );
 		clean_post_cache( $enrollment_id );
-		if ( false === $updated || $status !== get_post_status( $enrollment_id ) ) {
+		if ( false === $updated || get_post_status( $enrollment_id ) !== $status ) {
 			return false;
 		}
 		do_action( 'tutor/course/enrol_status_change/after', $enrollment_id, $status );

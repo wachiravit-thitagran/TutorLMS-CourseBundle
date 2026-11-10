@@ -31,8 +31,9 @@ final class BundleController {
 	/**
 	 * Constructor.
 	 *
-	 * @param BundleRepository   $bundles  Bundle repository.
-	 * @param ProgressController $progress Progress calculator.
+	 * @param BundleRepository                                            $bundles  Bundle repository.
+	 * @param ProgressController                                          $progress Progress calculator.
+	 * @param \SpaceWork\TutorCourseBundles\Commerce\CommerceManager|null $commerce Commerce synchronization service.
 	 */
 	public function __construct(
 		private readonly BundleRepository $bundles,
@@ -492,6 +493,14 @@ final class BundleController {
 		return new \WP_REST_Response( $bundle ? $this->prepare_bundle( $bundle, true ) : array(), 200 );
 	}
 
+	/**
+	 * Persist a post while deferring product sync until aggregate metadata is saved.
+	 *
+	 * @param array<string, mixed> $data     Post data.
+	 * @param bool                 $wp_error Whether to return WordPress errors.
+	 * @param bool                 $update   Whether to update an existing post.
+	 * @return int|\WP_Error Post ID or persistence error.
+	 */
 	private function save_post( array $data, bool $wp_error = true, bool $update = false ) {
 		$save = static fn() => $update ? wp_update_post( $data, $wp_error ) : wp_insert_post( $data, $wp_error );
 		return null !== $this->commerce ? $this->commerce->without_product_sync( $save ) : $save();
