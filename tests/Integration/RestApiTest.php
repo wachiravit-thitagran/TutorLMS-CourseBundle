@@ -25,6 +25,26 @@ use WP_REST_Request;
  */
 final class RestApiTest extends TestCase {
 
+	public function test_instructor_cannot_attach_another_instructors_course(): void {
+		$owner = $this->seeder->instructor();
+		$other = $this->seeder->instructor();
+		$bundle = $this->seeder->bundle( array( 'author' => $owner ) );
+		$course = $this->seeder->course();
+		wp_update_post( array( 'ID' => $course, 'post_author' => $other ) );
+		wp_set_current_user( $owner );
+		$response = $this->request( 'POST', '/bundles/' . $bundle . '/courses', array( 'course_id' => $course ) );
+		$this->assertSame( 403, $response->get_status() );
+		$this->assertSame( array(), tcb()->get( \SpaceWork\TutorCourseBundles\Infrastructure\BundleRepository::class )->get_course_ids( $bundle ) );
+	}
+
+	public function test_instructor_cannot_read_foreign_learner_progress(): void {
+		$owner = $this->seeder->instructor();
+		$bundle = $this->seeder->bundle( array( 'author' => $owner ) );
+		wp_set_current_user( $this->seeder->instructor() );
+		$response = $this->request( 'GET', '/bundles/' . $bundle . '/progress', array( 'user_id' => $this->seeder->student() ) );
+		$this->assertSame( 403, $response->get_status() );
+	}
+
 	private \WP_REST_Server $server;
 
 	/**

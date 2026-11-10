@@ -313,7 +313,9 @@ final class EnrollmentController {
 			return new \WP_Error( 'tcb_access_not_found', __( 'Entitlement not found.', 'tutor-course-bundles' ), array( 'status' => 404 ) );
 		}
 
-		$this->enrollments->revoke_access( $access_id, BundleAccess::STATUS_REVOKED, (string) $request['reason'] );
+		if ( ! $this->enrollments->revoke_access( $access_id, BundleAccess::STATUS_REVOKED, (string) $request['reason'] ) ) {
+			return new \WP_Error( 'tcb_revoke_busy', __( 'Enrollment changes are in progress; revocation has been queued.', 'tutor-course-bundles' ), array( 'status' => 409 ) );
+		}
 
 		return new \WP_REST_Response( array( 'revoked' => true ), 200 );
 	}

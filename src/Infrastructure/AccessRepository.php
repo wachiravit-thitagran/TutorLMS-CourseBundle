@@ -457,7 +457,7 @@ final class AccessRepository {
 	 * @param int $limit Batch size.
 	 * @return BundleAccess[]
 	 */
-	public function find_expired_active( int $limit = 100 ): array {
+	public function find_expired_active( int $limit = 100, int $before_id = 0 ): array {
 		global $wpdb;
 
 		$table = Migration::table_bundle_access();
@@ -467,9 +467,11 @@ final class AccessRepository {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				"SELECT * FROM {$table} WHERE status = %s AND expires_at IS NOT NULL AND expires_at < %s ORDER BY expires_at ASC LIMIT %d",
+				"SELECT * FROM {$table} WHERE status = %s AND expires_at IS NOT NULL AND expires_at <= %s AND (%d = 0 OR id < %d) ORDER BY id DESC LIMIT %d",
 				BundleAccess::STATUS_ACTIVE,
 				$now,
+				$before_id,
+				$before_id,
 				$limit
 			),
 			ARRAY_A

@@ -18,6 +18,16 @@ use SpaceWork\TutorCourseBundles\Tutor\TutorAdapter;
  */
 final class TutorAdapterTest extends UnitTestCase {
 
+	public function test_completion_policy_preserves_a_prerequisite_hold(): void {
+		\Brain\Monkey\Filters\expectApplied( 'tcb/enrollment/can_complete' )->with( true, 10, 20 )->andReturn( false );
+		$data = array( 'post_parent' => 10, 'post_author' => 20, 'post_status' => 'pending' );
+		$this->assertSame( $data, ( new TutorAdapter() )->force_completed_enrollment( $data ) );
+	}
+
+	public function test_an_empty_denied_payload_is_never_resurrected(): void {
+		$this->assertSame( array(), ( new TutorAdapter() )->force_completed_enrollment( array() ) );
+	}
+
 	/**
 	 * Temporary Tutor filters must be removed even when Tutor throws.
 	 */

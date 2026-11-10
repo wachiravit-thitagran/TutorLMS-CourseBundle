@@ -260,7 +260,7 @@ final class EnrollmentRepository {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-				"SELECT * FROM {$table} WHERE status IN (%s, %s) ORDER BY id DESC LIMIT %d",
+				"SELECT e.* FROM {$table} e WHERE e.status IN (%s, %s) OR (e.status = 'active' AND NOT EXISTS (SELECT 1 FROM {$wpdb->posts} p WHERE p.ID = e.tutor_enrollment_id AND p.post_type = 'tutor_enrolled' AND p.post_parent = e.course_id AND p.post_author = e.user_id AND p.post_status = 'completed')) ORDER BY e.id DESC LIMIT %d",
 				self::STATUS_FAILED,
 				self::STATUS_PENDING,
 				$limit

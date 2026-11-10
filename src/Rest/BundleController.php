@@ -36,7 +36,8 @@ final class BundleController {
 	 */
 	public function __construct(
 		private readonly BundleRepository $bundles,
-		private readonly ProgressController $progress
+		private readonly ProgressController $progress,
+		private readonly ?\SpaceWork\TutorCourseBundles\Commerce\CommerceManager $commerce = null
 	) {}
 
 	/**
@@ -341,7 +342,7 @@ final class BundleController {
 			return true;
 		}
 
-		return Capabilities::current_user_can_manage() || current_user_can( Capabilities::VIEW_REPORTS );
+		return Capabilities::can_view_bundle_reports( (int) $request['id'] );
 	}
 
 	/*
@@ -412,7 +413,7 @@ final class BundleController {
 			return new \WP_Error( 'tcb_missing_title', __( 'A title is required.', 'tutor-course-bundles' ), array( 'status' => 400 ) );
 		}
 
-		$post_id = wp_insert_post(
+		$post_id = $this->save_post(
 			array(
 				'post_type'    => PostTypes::POST_TYPE,
 				'post_title'   => $title,
@@ -427,7 +428,14 @@ final class BundleController {
 			return $post_id;
 		}
 
-		$this->apply_meta( (int) $post_id, $request );
+		$saved = $this->apply_meta( (int) $post_id, $request );
+		if ( is_wp_error( $saved ) ) {
+			return $saved;
+		}
+		$synced = $this->commerce?->sync_saved_bundle( (int) $post_id );
+		if ( is_wp_error( $synced ) ) {
+			return $synced;
+		}
 
 		$bundle = $this->bundles->find( (int) $post_id );
 
@@ -463,18 +471,30 @@ final class BundleController {
 		}
 
 		if ( count( $update ) > 1 ) {
-			$result = wp_update_post( $update, true );
+			$result = $this->save_post( $update, true, true );
 
 			if ( is_wp_error( $result ) ) {
 				return $result;
 			}
 		}
 
-		$this->apply_meta( $bundle_id, $request );
+		$saved = $this->apply_meta( $bundle_id, $request );
+		if ( is_wp_error( $saved ) ) {
+			return $saved;
+		}
+		$synced = $this->commerce?->sync_saved_bundle( $bundle_id );
+		if ( is_wp_error( $synced ) ) {
+			return $synced;
+		}
 
 		$bundle = $this->bundles->find( $bundle_id );
 
 		return new \WP_REST_Response( $bundle ? $this->prepare_bundle( $bundle, true ) : array(), 200 );
+	}
+
+	private function save_post( array $data, bool $wp_error = true, bool $update = false ) {
+		$save = static fn() => $update ? wp_update_post( $data, $wp_error ) : wp_insert_post( $data, $wp_error );
+		return null !== $this->commerce ? $this->commerce->without_product_sync( $save ) : $save();
 	}
 
 	/**
@@ -483,18 +503,30 @@ final class BundleController {
 	 * @param int              $bundle_id Bundle post ID.
 	 * @param \WP_REST_Request $request   Request.
 	 */
-	private function apply_meta( int $bundle_id, \WP_REST_Request $request ): void {
-		if ( $request->has_param( 'price' ) ) {
-			update_post_meta( $bundle_id, Bundle::META_PRICE, (float) $request['price'] );
+	private function apply_meta( int $bundle_id, \WP_REST_Request $request ) {
+		$fields = array(
+			'price'       => Bundle::META_PRICE,
+			'sale_price'  => Bundle::META_SALE_PRICE,
+			'access_type' => Bundle::META_ACCESS_TYPE,
+		);
+		foreach ( $fields as $field => $meta_key ) {
+			if ( ! $request->has_param( $field ) ) {
+				continue;
+			}
+			$value  = 'access_type' === $field ? (string) $request[ $field ] : (float) $request[ $field ];
+			$result = update_post_meta( $bundle_id, $meta_key, $value );
+			if ( false === $result && (string) get_post_meta( $bundle_id, $meta_key, true ) !== (string) $value ) {
+				return new \WP_Error(
+					'tcb_bundle_meta_write_failed',
+					__( 'The bundle metadata could not be saved. Please retry the save.', 'tutor-course-bundles' ),
+					array(
+						'status'    => 500,
+						'bundle_id' => $bundle_id,
+					)
+				);
+			}
 		}
-
-		if ( $request->has_param( 'sale_price' ) ) {
-			update_post_meta( $bundle_id, Bundle::META_SALE_PRICE, (float) $request['sale_price'] );
-		}
-
-		if ( $request->has_param( 'access_type' ) ) {
-			update_post_meta( $bundle_id, Bundle::META_ACCESS_TYPE, (string) $request['access_type'] );
-		}
+		return true;
 	}
 
 	/**
@@ -542,6 +574,12 @@ final class BundleController {
 	 * @return \WP_REST_Response|\WP_Error
 	 */
 	public function add_course( \WP_REST_Request $request ) {
+		if ( ! Capabilities::current_user_can_manage()
+			&& 'yes' !== get_option( 'tcb_instructor_any_course', 'no' )
+			&& ! ( new \SpaceWork\TutorCourseBundles\Tutor\TutorAdapter() )->user_owns_course( (int) $request['course_id'], get_current_user_id() ) ) {
+			return new \WP_Error( 'tcb_course_forbidden', __( 'You may only attach courses you teach.', 'tutor-course-bundles' ), array( 'status' => 403 ) );
+		}
+
 		$result = $this->bundles->add_course(
 			(int) $request['id'],
 			(int) $request['course_id'],

@@ -18,41 +18,34 @@ defined( 'ABSPATH' ) || exit;
  * an admin request at nearly the same moment. Without a lock, both would walk
  * the bundle's course list and race on the enrollment insert.
  *
- * Implementation uses `wp_options` with an `autoload = no` row and the atomic
- * `INSERT ... ON DUPLICATE KEY UPDATE` semantics that `add_option()` gives us:
- * add_option() returns false when the row already exists.
+ * MySQL advisory locks are connection-owned and survive long operations.
+ * A crashed connection releases its locks automatically; a live owner never
+ * loses an expiring lease halfway through an enrollment write.
  */
 final class LockManager {
 
-	private const PREFIX      = 'tcb_lock_';
 	private const DEFAULT_TTL = 120;
+	/** @var array<string, self> Locks owned by this PHP connection. */
+	private static array $owners = array();
 
 	/**
 	 * Attempt to acquire a lock.
 	 *
 	 * @param string $key Lock key, e.g. "order_processing_1234".
-	 * @param int    $ttl Seconds before the lock is considered stale.
+	 * @param int    $ttl Maximum wait in seconds (capped at ten); retained for API compatibility.
 	 * @return bool True when the lock was acquired by this process.
 	 */
 	public function acquire( string $key, int $ttl = self::DEFAULT_TTL ): bool {
-		$option  = $this->option_name( $key );
-		$expires = time() + $ttl;
-
-		// Fast path: fresh insert wins the lock.
-		if ( add_option( $option, $expires, '', false ) ) {
-			return true;
+		global $wpdb;
+		$name = $this->option_name( $key );
+		if ( isset( self::$owners[ $name ] ) ) {
+			return false; // MySQL named locks are reentrant; our critical sections are not.
 		}
-
-		$existing = (int) get_option( $option, 0 );
-
-		// Stale lock left behind by a crashed request — take it over.
-		if ( $existing > 0 && $existing < time() ) {
-			delete_option( $option );
-
-			return (bool) add_option( $option, $expires, '', false );
+		$acquired = '1' === (string) $wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s, %d)', $name, min( 10, max( 0, $ttl ) ) ) );
+		if ( $acquired ) {
+			self::$owners[ $name ] = $this;
 		}
-
-		return false;
+		return $acquired;
 	}
 
 	/**
@@ -61,7 +54,15 @@ final class LockManager {
 	 * @param string $key Lock key.
 	 */
 	public function release( string $key ): void {
-		delete_option( $this->option_name( $key ) );
+		global $wpdb;
+		$name = $this->option_name( $key );
+		if ( ( self::$owners[ $name ] ?? null ) !== $this ) {
+			return;
+		}
+		// MySQL releases only locks belonging to this connection. Connection
+		// loss releases automatically; no expiring lease can be stolen mid-write.
+		$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+		unset( self::$owners[ $name ] );
 	}
 
 	/**
@@ -70,7 +71,7 @@ final class LockManager {
 	 * @template T
 	 * @param string   $key      Lock key.
 	 * @param callable $callback Work to perform.
-	 * @param int      $ttl      Lock lifetime.
+	 * @param int      $ttl      Maximum acquisition wait, capped at ten seconds.
 	 * @return mixed|null Callback return value, or null when the lock was busy.
 	 */
 	public function with_lock( string $key, callable $callback, int $ttl = self::DEFAULT_TTL ) {
@@ -91,6 +92,7 @@ final class LockManager {
 	 * @param string $key Lock key.
 	 */
 	private function option_name( string $key ): string {
-		return self::PREFIX . substr( preg_replace( '/[^a-z0-9_]/i', '_', $key ) ?? '', 0, 100 );
+		global $wpdb;
+		return 'tcb_' . substr( hash( 'sha256', DB_NAME . ':' . $wpdb->prefix . ':' . $key ), 0, 56 );
 	}
 }

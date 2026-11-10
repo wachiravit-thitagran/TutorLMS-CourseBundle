@@ -74,6 +74,10 @@ tests_add_filter(
 		}
 
 		require_once $tcb_root . '/tutor-course-bundles.php';
+		$prerequisites = getenv( 'TCB_TEST_PREREQUISITES_FILE' );
+		if ( $prerequisites && is_readable( $prerequisites ) ) {
+			require_once $prerequisites;
+		}
 	}
 );
 
@@ -114,6 +118,10 @@ require $tcb_tests_dir . '/includes/bootstrap.php';
  */
 \SpaceWork\TutorCourseBundles\Support\Migration::install();
 \SpaceWork\TutorCourseBundles\Support\Capabilities::add_roles_capabilities();
+
+if ( class_exists( '\SpaceWork\TutorLearningPaths\Activation' ) ) {
+	\SpaceWork\TutorLearningPaths\Activation::run();
+}
 
 require_once __DIR__ . '/Support/TestCase.php';
 require_once __DIR__ . '/Support/Seeder.php';

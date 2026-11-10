@@ -32,6 +32,8 @@ defined( 'ABSPATH' ) || exit;
  */
 final class CommerceManager {
 
+	private int $aggregate_save_depth = 0;
+
 	/**
 	 * Constructor.
 	 *
@@ -122,28 +124,67 @@ final class CommerceManager {
 	 * @param bool     $update  Whether this is an update.
 	 */
 	public function maybe_sync_product( int $post_id, \WP_Post $post, bool $update ): void {
-		if ( wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) {
+		if ( $this->aggregate_save_depth > 0 || wp_is_post_revision( $post_id ) || wp_is_post_autosave( $post_id ) ) {
 			return;
 		}
 
-		if ( 'yes' !== get_option( 'tcb_wc_auto_product', 'yes' ) ) {
-			return;
-		}
-
-		$bundle = $this->bundles->find( $post_id );
-
-		if ( ! $bundle instanceof Bundle || $bundle->is_free() ) {
-			return;
-		}
-
-		$result = $this->woo->sync_product( $post_id );
-
+		$result = $this->sync_saved_bundle( $post_id );
 		if ( is_wp_error( $result ) ) {
 			Logger::debug(
 				'Product sync failed.',
 				array(
 					'bundle_id' => $post_id,
 					'error'     => $result->get_error_message(),
+				)
+			);
+		}
+	}
+
+	/** Suppress the early save_post sync while a REST aggregate is written. */
+	public function without_product_sync( callable $save ) {
+		++$this->aggregate_save_depth;
+		try {
+			return $save();
+		} finally {
+			--$this->aggregate_save_depth;
+		}
+	}
+
+	/** Synchronize once, after final post and metadata persistence. */
+	public function sync_saved_bundle( int $post_id ) {
+		if ( ! Compatibility::woocommerce_active() || 'yes' !== get_option( 'tcb_wc_auto_product', 'yes' ) ) {
+			return true;
+		}
+		$bundle = $this->bundles->find( $post_id );
+		if ( ! $bundle instanceof Bundle ) {
+			return new \WP_Error( 'tcb_bundle_not_found', __( 'Bundle not found.', 'tutor-course-bundles' ) );
+		}
+		try {
+			if ( $bundle->is_free() ) {
+				$product = wc_get_product( $this->woo->get_product_id( $post_id ) );
+				if ( $product instanceof \WC_Product ) {
+					$product->set_status( 'draft' );
+					if ( ! $product->save() ) {
+						return new \WP_Error( 'tcb_product_save_failed', __( 'Could not retire the linked product.', 'tutor-course-bundles' ) );
+					}
+				}
+				return true;
+			}
+			return $this->woo->sync_product( $post_id );
+		} catch ( \Throwable $error ) {
+			Logger::debug(
+				'Product sync exception.',
+				array(
+					'bundle_id' => $post_id,
+					'error'     => $error->getMessage(),
+				)
+			);
+			return new \WP_Error(
+				'tcb_product_sync_failed',
+				__( 'The bundle was saved, but its checkout product could not be synchronized. Please retry the save.', 'tutor-course-bundles' ),
+				array(
+					'status'    => 500,
+					'bundle_id' => $post_id,
 				)
 			);
 		}
