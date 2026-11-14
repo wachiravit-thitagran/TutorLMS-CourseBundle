@@ -61,7 +61,29 @@ final class P2CommerceTest extends TestCase {
 		} finally {
 			remove_action( 'tcb/woocommerce/product_synced', $capture );}
 	}
+	public function test_rest_paid_to_free_change_retires_the_existing_product(): void {
+		$this->require_woocommerce();
+		wp_set_current_user( $this->seeder->admin() );
+		$request = new \WP_REST_Request( 'POST', '/tcb/v1/bundles' );
+		$request->set_body_params( array( 'title' => 'REST paid to free', 'status' => 'publish', 'access_type' => 'paid', 'price' => 70 ) );
+		$response = rest_do_request( $request );
+		$this->assertSame( 201, $response->get_status() );
+		$id = $response->get_data()['id'];
+		$product_id = (int) get_post_meta( $id, Bundle::META_WC_PRODUCT_ID, true );
+		$product = wc_get_product( $product_id );
+		$this->assertInstanceOf( \WC_Product::class, $product );
+		$this->assertSame( '70', $product->get_regular_price() );
+		$this->assertSame( 'publish', $product->get_status() );
+		$request = new \WP_REST_Request( 'PATCH', '/tcb/v1/bundles/' . $id );
+		$request->set_body_params( array( 'access_type' => 'free' ) );
+		$this->assertSame( 200, rest_do_request( $request )->get_status() );
+		$this->assertSame( $product_id, (int) get_post_meta( $id, Bundle::META_WC_PRODUCT_ID, true ) );
+		$this->assertSame( 'draft', wc_get_product( $product_id )->get_status() );
+	}
 	public function test_registered_ability_saves_paid_bundle_product(): void {
+		if ( ! function_exists( 'wp_get_ability' ) ) {
+			$this->markTestSkipped( 'The native Abilities API is unavailable on this WordPress version; REST commerce remains covered separately.' );
+		}
 		$this->require_woocommerce();
 		wp_set_current_user( $this->seeder->admin() );
 		$ability = wp_get_ability( 'tutorlms-bundle/create-bundle' );
