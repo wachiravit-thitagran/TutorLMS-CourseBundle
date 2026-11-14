@@ -66,7 +66,7 @@ final class DashboardIntegration {
 			self::ENDPOINT => array(
 				'title'    => __( 'My Bundles', 'tutor-course-bundles' ),
 				'auth_cap' => 'read',
-				'icon'     => 'tutor-icon-bundle',
+				'icon'     => defined( 'TUTOR\\Icon::BUNDLE' ) ? constant( 'TUTOR\\Icon::BUNDLE' ) : 'tutor-icon-bundle',
 			),
 		);
 
