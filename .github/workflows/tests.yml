@@ -61,7 +61,9 @@ jobs:
   # ---------------------------------------------------------------------------
   integration:
     name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
+    # Ubuntu 26.04's mysql-client upgrade fails configuring the preinstalled server.
+    # Keep database jobs on the supported 24.04 image with the existing MySQL 8.0 service.
+    runs-on: ubuntu-24.04
     continue-on-error: ${{ matrix.experimental || false }}
 
     strategy:
@@ -205,7 +207,7 @@ jobs:
   # ---------------------------------------------------------------------------
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [unit]
 
     services:
